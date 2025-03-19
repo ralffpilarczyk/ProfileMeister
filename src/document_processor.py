@@ -1,43 +1,11 @@
 """
-Document processing module for ProfileMeister
+Document processing module for ProfileMeister (Streamlit Version)
 Handles document upload and preprocessing
 """
 
 import os
 import base64
-import tkinter as tk
-from tkinter import filedialog
 from html_generator import extract_text_from_html
-
-def upload_documents():
-    """
-    Open a file dialog to select PDF files
-    Returns a dictionary of filename: content pairs
-    """
-    # Create and hide the root window
-    root = tk.Tk()
-    root.withdraw()
-    
-    # Open file dialog
-    files = filedialog.askopenfilenames(
-        title='Select PDF files',
-        filetypes=[('PDF files', '*.pdf')]
-    )
-    
-    # Create a dictionary similar to files.upload() return format
-    uploaded = {}
-    for file_path in files:
-        with open(file_path, 'rb') as file:
-            filename = os.path.basename(file_path)  # Get just the filename
-            uploaded[filename] = file.read()
-    
-    # Print info about uploaded files
-    for fn in uploaded.keys():
-        print('User uploaded file "{name}" with length {length} bytes'.format(
-            name=fn, length=len(uploaded[fn])))
-    
-    return uploaded
-
 
 # Global variable to store current documents
 _current_documents = []
@@ -50,6 +18,9 @@ def load_document_content(uploaded):
     """
     Process uploaded documents and convert to format needed for API
     Returns a list of document dictionaries
+    
+    Args:
+        uploaded: Dictionary of filename: content pairs from Streamlit uploader
     """
     global _current_documents
     documents = []
