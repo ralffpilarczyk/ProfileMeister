@@ -4,40 +4,30 @@ Handles processing of individual sections
 """
 
 import time
-from api_client import cached_generate_content
+from api_client import cached_generate_content, create_fact_model, create_insight_model
 from html_generator import save_section, load_section, validate_html, repair_html
+from state_manager import get_elapsed_time
 
-def process_section_in_parallel(section, documents, persona, analysis_specs, output_format, profile_folder,
-                               refinement_iterations=1, progress_callback=None, q_number=5):
-    """Process a single section for parallel execution with HTML output"""
+def process_section(section, documents, persona, analysis_specs, output_format, profile_folder,
+                    refinement_iterations=1, q_number=5):
+    """Process a single section without threading dependencies"""
     section_num = section["number"]
     section_title = section["title"]
     section_specs = section["specs"]
 
-    print(f"Entering process_section_in_parallel for section {section_num}")
+    print(f"Processing section {section_num}")
 
-    # Get elapsed time function from project timing
-    try:
-        from profile_meister import get_elapsed_time
-    except ImportError:
-        def get_elapsed_time():
-            return f"{time.time():.1f}s"
-
-    # Define log function based on callback
+    # Define log function
     def log_progress(message):
         print(f"{get_elapsed_time()} Section {section_num}: {message}")
-        if progress_callback:
-            progress_callback(f"Section {section_num}: {message}")
 
     log_progress(f"GENERATING AND REFINING {section_title}")
 
     # Check if we already have a refined version of this section saved
     existing_refined_content = load_section(profile_folder, f"{section_num}_refined")
-
     if existing_refined_content:
-        section_content = existing_refined_content
         log_progress("Loaded previously refined section")
-        return section_num, section_content
+        return existing_refined_content
 
     # Add timeout protection for the overall section processing
     section_start_time = time.time()
@@ -100,10 +90,6 @@ def process_section_in_parallel(section, documents, persona, analysis_specs, out
     """
 
     try:
-        # Check for timeout
-        if time.time() - section_start_time > section_timeout:
-            raise TimeoutError(f"Section {section_num} processing exceeded timeout limit of {section_timeout} seconds")
-
         # Generate initial content for this section
         log_progress("Generating initial content")
         # Create a copy of documents for this section
@@ -111,30 +97,23 @@ def process_section_in_parallel(section, documents, persona, analysis_specs, out
         prompt = f"{persona} {section_instruction} {output_format}"
         section_docs.append(prompt)
 
-        # Import models here to avoid circular imports
-        from api_client import create_insight_model, create_fact_model
+        # Create insight model
         insight_model = create_insight_model()
 
-        # Generate content with your model - add more detailed error handling
+        # Generate content with model
         log_progress("Starting API call for initial content")
         try:
-            # Add individual timeout for initial API call
-            print(f"About to call cached_generate_content for initial generation, section {section_num}")
-            section_response = cached_generate_content(insight_model, section_docs, section_num, timeout=240)  # Longer timeout for initial generation
-            print(f"Successfully called cached_generate_content, section {section_num}")
+            section_response = cached_generate_content(insight_model, section_docs, section_num, timeout=240)
             section_content = section_response.text
         except Exception as e:
-            log_progress(f"API call failed in process_section_in_parallel, section {section_num}: {str(e)}")
-            # Create a fallback minimal section
+            log_progress(f"API call failed: {str(e)}")
             section_content = f'''
             <div class="section" id="section-{section_num}">
               <h2>{section_num}. {section_title}</h2>
               <p>Error generating content: {str(e)}</p>
             </div>
             '''
-            # Skip further processing
-            return section_num, section_content
-
+            return section_content
 
         # Apply HTML repair right after generation
         log_progress("Repairing HTML")
@@ -145,7 +124,7 @@ def process_section_in_parallel(section, documents, persona, analysis_specs, out
         if not validate_html(section_content):
             log_progress("Warning - Invalid HTML even after repair")
 
-        # Check for timeout again
+        # Check for timeout
         if time.time() - section_start_time > section_timeout:
             raise TimeoutError(f"Section {section_num} processing exceeded timeout")
 
@@ -165,7 +144,7 @@ def process_section_in_parallel(section, documents, persona, analysis_specs, out
             # Save as refined version
             save_section(profile_folder, f"{section_num}_refined", best_section_content)
             log_progress("No refinement requested, saved initial content as refined")
-            return section_num, best_section_content
+            return best_section_content
 
         # Only proceed with refinement if iterations > 0
         if refinement_iterations > 0:
@@ -181,11 +160,11 @@ def process_section_in_parallel(section, documents, persona, analysis_specs, out
                     raise TimeoutError(f"Section {section_num} processing exceeded timeout")
 
                 log_progress("Performing fact critique")
-                fact_critique_response, fact_critique_text = get_fact_critique(section_instruction, section_content)
+                fact_critique_response, fact_critique_text = get_fact_critique(section_instruction, section_content, documents)
 
                 log_progress("Applying fact improvements")
                 fact_improvement_response, fact_improved_content = fact_improvement_response(
-                    section_instruction, section_content, fact_critique_text
+                    section_instruction, section_content, fact_critique_text, documents
                 )
 
                 # Apply HTML repair right after fact improvement
@@ -209,11 +188,11 @@ def process_section_in_parallel(section, documents, persona, analysis_specs, out
                     raise TimeoutError(f"Section {section_num} processing exceeded timeout")
 
                 log_progress("Performing insight critique")
-                insight_critique_response, insight_critique_text = get_insight_critique(section_instruction, best_section_content)
+                insight_critique_response, insight_critique_text = get_insight_critique(section_instruction, best_section_content, documents)
 
                 log_progress("Applying insight improvements")
                 insight_improvement_response, insight_improved_content = insight_improvement_response(
-                    section_instruction, best_section_content, insight_critique_text
+                    section_instruction, best_section_content, insight_critique_text, documents
                 )
 
                 # Apply HTML repair right after insight improvement
@@ -240,7 +219,7 @@ def process_section_in_parallel(section, documents, persona, analysis_specs, out
 
                 # Apply question-based refinement
                 question_improved_content = perform_question_refinement(
-                    section_instruction, best_section_content, q_number=q_number
+                    section_instruction, best_section_content, documents, q_number=q_number
                 )
 
                 # Apply HTML repair after question refinement
@@ -260,33 +239,28 @@ def process_section_in_parallel(section, documents, persona, analysis_specs, out
         # Save the final version as a refined section
         save_section(profile_folder, f"{section_num}_refined", best_section_content)
         log_progress(f"Saved refined section")
-        return section_num, best_section_content
+        return best_section_content
 
     except TimeoutError as e:
         # Handle timeout explicitly
         log_progress(f"TIMEOUT - {str(e)}")
-        import traceback
-        error_detail = traceback.format_exc()
         error_content = f'''
-        <div class="section" id="section-{section["number"]}">
-          <h2>{section["number"]}. {section["title"]}</h2>
-          <p class="error">ERROR: Could not process section {section["number"]}: {str(e)}</p>
-          <p><pre>{error_detail}</pre></p>
+        <div class="section" id="section-{section_num}">
+          <h2>{section_num}. {section_title}</h2>
+          <p class="error">ERROR: Could not process section {section_num}: {str(e)}</p>
         </div>
         '''
-        return section_num, error_content
+        return error_content
     except Exception as e:
         # Handle any other exceptions
         log_progress(f"ERROR - {str(e)}")
         import traceback
-        traceback.print_exc() # Print the full stack trace!
         error_detail = traceback.format_exc()
 
         error_content = f'''
         <div class="section" id="section-{section_num}">
           <h2>{section_num}. {section_title}</h2>
           <p class="error">ERROR: Could not generate section {section_num}: {str(e)}</p>
-           <p><pre>{error_detail}</pre></p>
         </div>
         '''
-        return section_num, error_content
+        return error_content

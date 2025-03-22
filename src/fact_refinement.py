@@ -4,14 +4,16 @@ Handles fact-checking and factual improvements
 """
 
 from api_client import cached_generate_content, create_fact_model
+from utils import persona, output_format
 
-def get_fact_critique(initial_instruction, answer):
+def get_fact_critique(initial_instruction, answer, documents):
     """
     Generate a fact critique for the given answer
     
     Args:
         initial_instruction: The original instruction/question
         answer: The answer to be critiqued
+        documents: The document list to use for context
         
     Returns:
         tuple: (critique_response, critique_text)
@@ -30,14 +32,10 @@ def get_fact_critique(initial_instruction, answer):
         "Think step by step and list each factual issue in order of importance."
     )
     
-    # Import persona to avoid circular imports
-    from prompts import persona, output_format
-    
     prompt = f"{persona} {instruction} {output_format}"
     
-    # Get a local reference to documents
-    from document_processor import get_current_documents
-    fact_critique_docs = get_current_documents()
+    # Create a copy of documents to avoid modifying the original
+    fact_critique_docs = documents.copy()
     fact_critique_docs.append(prompt)
     
     # Create fact model for critique
@@ -49,7 +47,7 @@ def get_fact_critique(initial_instruction, answer):
     
     return fact_critique_response, fact_critique_text
 
-def fact_improvement_response(initial_instruction, answer, fact_critique_text):
+def fact_improvement_response(initial_instruction, answer, fact_critique_text, documents):
     """
     Generate an improved answer based on fact critique
     
@@ -57,6 +55,7 @@ def fact_improvement_response(initial_instruction, answer, fact_critique_text):
         initial_instruction: The original instruction/question
         answer: The original answer
         fact_critique_text: Text of the fact critique
+        documents: The document list to use for context
         
     Returns:
         tuple: (improved_response, improved_text)
@@ -72,14 +71,10 @@ def fact_improvement_response(initial_instruction, answer, fact_critique_text):
         "Do not cut out text or facts unless that's absolutely necessary due to the critique."
     )
 
-    # Import persona to avoid circular imports
-    from prompts import persona, output_format
-    
     prompt = f"{persona} {instruction} {output_format}"
     
-    # Get a local reference to documents
-    from document_processor import get_current_documents
-    improved_docs = get_current_documents()
+    # Create a copy of documents to avoid modifying the original
+    improved_docs = documents.copy()
     improved_docs.append(prompt)
 
     # Create fact model

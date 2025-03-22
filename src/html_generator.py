@@ -7,23 +7,24 @@ import os
 import re
 import json
 from datetime import datetime
+import glob
 
 def create_profile_folder(company_name):
     """Create a unique folder for storing profile sections"""
     # Clean company name for folder naming (remove invalid characters)
     clean_name = ''.join(c if c.isalnum() or c in [' ', '_', '-'] else '_' for c in company_name)
     clean_name = clean_name.replace(' ', '_')
-    
+
     # Create timestamp for uniqueness
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
+
     # Create folder name with company and timestamp
     folder_name = f"profile_{clean_name}_{timestamp}"
-    
+
     # Create the folder if it doesn't exist
     if not os.path.exists(folder_name):
         os.makedirs(folder_name)
-    
+
     return folder_name, timestamp # Return folder name and timestamp
 
 def save_section(profile_folder, section_number, content):
@@ -48,56 +49,56 @@ def validate_html(html_content):
     if not html_content or not html_content.strip():
         print("Warning: Empty HTML content")
         return False
-    
+
     # Basic check - ensure section div and closing tag are present
     if not re.search(r'<div\s+class=["\']section["\']', html_content):
         print("Warning: Missing <div class=\"section\"> wrapper")
         return False
-        
+
     if '</div>' not in html_content:
         print("Warning: Missing closing </div> tag")
         return False
-    
+
     # Simple tag balance check for critical tags
     tags_to_check = ['div', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'ul', 'ol', 'li']
-    
+
     for tag in tags_to_check:
         opening_count = len(re.findall(f'<{tag}[^>]*>', html_content, re.IGNORECASE))
         closing_count = len(re.findall(f'</{tag}>', html_content, re.IGNORECASE))
-        
+
         if opening_count != closing_count:
             print(f"Warning: Unbalanced {tag} tags. Opening: {opening_count}, Closing: {closing_count}")
             # Don't fail validation on small imbalances - just report them
             if abs(opening_count - closing_count) > 3 and tag in ['div', 'table']:
                 return False
-    
+
     return True
 
 def repair_html(html_content, section_num=None, section_title=None):
     """Enhanced repair of common HTML issues with iteration limits to prevent infinite loops"""
     import re
-    
+
     # Set iteration limits
     MAX_ITERATIONS = 5
-    
+
     # Ensure we have something to work with
     if not html_content or not html_content.strip():
         return f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p>No content available</p></div>'
-    
+
     # First, normalize <br> tags (replace with <br/> to avoid confusion in counting)
     html_content = re.sub(r'<br\s*>', '<br/>', html_content)
-    
+
     # Fix missing or broken section wrapper
     if not html_content.strip().startswith('<div class="section"'):
         if section_num and section_title:
             html_content = f'<div class="section" id="section-{section_num}">\n<h2>{section_num}. {section_title}</h2>\n{html_content}'
         else:
             html_content = f'<div class="section">\n{html_content}'
-    
+
     # Ensure the section wrapper is closed at the end
     if '</div>' not in html_content[-20:]:
         html_content += '\n</div>'
-    
+
     # Fix tables missing proper structure
     if '<table' in html_content and ('<thead' not in html_content or '<tbody' not in html_content):
         # Add thead if there are th elements but no thead
@@ -111,7 +112,7 @@ def repair_html(html_content, section_num=None, section_title=None):
                     html_content = html_content.replace(th_row, f'<thead>\n{th_row}\n</thead>', 1)  # Limit to 1 replacement
                 except:
                     pass  # Skip if replacement fails
-        
+
         # Add tbody for remaining rows if not present
         if '<tbody' not in html_content:
             # Add tbody wrapper for any tr not in thead
@@ -126,13 +127,13 @@ def repair_html(html_content, section_num=None, section_title=None):
                                 # Find content after thead
                                 thead_end_pos = table_match.find('</thead>') + len('</thead>')
                                 table_end_pos = table_match.rfind('</table>')
-                                
+
                                 if thead_end_pos > 0 and table_end_pos > thead_end_pos:
                                     body_content = table_match[thead_end_pos:table_end_pos]
                                     new_body_content = f'<tbody>\n{body_content}\n</tbody>'
                                     new_table = (
-                                        table_match[:thead_end_pos] + 
-                                        new_body_content + 
+                                        table_match[:thead_end_pos] +
+                                        new_body_content +
                                         table_match[table_end_pos:]
                                     )
                                     html_content = html_content.replace(table_match, new_table, 1)
@@ -143,13 +144,13 @@ def repair_html(html_content, section_num=None, section_title=None):
                             try:
                                 table_start_pos = table_match.find('>') + 1
                                 table_end_pos = table_match.rfind('</table>')
-                                
+
                                 if table_start_pos > 0 and table_end_pos > table_start_pos:
                                     all_content = table_match[table_start_pos:table_end_pos]
                                     new_all_content = f'<tbody>\n{all_content}\n</tbody>'
                                     new_table = (
-                                        table_match[:table_start_pos] + 
-                                        new_all_content + 
+                                        table_match[:table_start_pos] +
+                                        new_all_content +
                                         table_match[table_end_pos:]
                                     )
                                     html_content = html_content.replace(table_match, new_table, 1)
@@ -157,17 +158,17 @@ def repair_html(html_content, section_num=None, section_title=None):
                                 continue  # Skip if replacement fails
             except:
                 pass  # Skip if overall table fixing fails
-    
+
     # Fix common unclosed tags in reverse nesting order (innermost first)
     # List of tags to check, in order of typical nesting
     tags_to_check = ['td', 'th', 'tr', 'thead', 'tbody', 'table', 'li', 'ul', 'ol', 'p', 'div']
-    
+
     for tag in tags_to_check:
         try:
             # Count opening and closing tags
             opening_count = len(re.findall(f'<{tag}[^>]*>', html_content, re.IGNORECASE))
             closing_count = len(re.findall(f'</{tag}>', html_content, re.IGNORECASE))
-            
+
             # Add missing closing tags (with limit)
             if opening_count > closing_count:
                 max_tags_to_add = min(opening_count - closing_count, 5)  # Limit number of tags to add
@@ -180,7 +181,7 @@ def repair_html(html_content, section_num=None, section_title=None):
                         html_content += f'</{tag}>\n'
         except:
             pass  # Skip if this tag fixing fails
-    
+
     # Final protection - if content is too bad, replace with minimal valid structure
     if not validate_html(html_content) and section_num and section_title:
         try:
@@ -190,7 +191,7 @@ def repair_html(html_content, section_num=None, section_title=None):
             # Limit length for safety
             if len(text_content) > 1000:
                 text_content = text_content[:1000] + "..."
-                
+
             # Create minimal valid HTML
             html_content = f'''
             <div class="section" id="section-{section_num}">
@@ -202,13 +203,13 @@ def repair_html(html_content, section_num=None, section_title=None):
         except:
             # Ultimate fallback
             html_content = f'<div class="section" id="section-{section_num}"><h2>{section_num}. {section_title}</h2><p>Error: Could not repair content</p></div>'
-    
+
     return html_content
 
 def generate_full_html_profile(company_name, sections, section_contents):
     """Generate a complete HTML document from section contents"""
     from datetime import datetime
-    
+
     html_head = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -249,7 +250,7 @@ def generate_full_html_profile(company_name, sections, section_contents):
             Generated on: {datetime.now().strftime("%B %d, %Y")}
         </div>
     </div>
-    
+
     <div class="toc">
         <h3>Table of Contents</h3>
         <ul>
@@ -264,13 +265,13 @@ def generate_full_html_profile(company_name, sections, section_contents):
 
     toc_end = """        </ul>
     </div>
-    
+
     <div class="content">
 """
 
     html_foot = """
     </div>
-    
+
     <script>
         // Add print button
         document.addEventListener('DOMContentLoaded', function() {
@@ -285,7 +286,7 @@ def generate_full_html_profile(company_name, sections, section_contents):
                 window.print();
             });
             headerWrapper.appendChild(printButton);
-            
+
             // Add collapse/expand functionality to sections
             const sections = document.querySelectorAll('.section h2');
             sections.forEach(header => {
@@ -296,10 +297,10 @@ def generate_full_html_profile(company_name, sections, section_contents):
                         element.style.display = element.style.display === 'none' ? '' : 'none';
                     });
                 });
-                
+
                 // Add visual indicator
                 const indicator = document.createElement('span');
-                indicator.innerHTML = ' &#9660;'; // Down arrow
+                indicator.innerHTML = ' ▼'; // Down arrow
                 indicator.style.fontSize = '0.8em';
                 indicator.className = 'no-print';
                 header.appendChild(indicator);
@@ -318,7 +319,7 @@ def generate_full_html_profile(company_name, sections, section_contents):
         full_profile += content
 
     full_profile += html_foot
-    
+
     return full_profile
 
 def extract_text_from_html(html_content):
@@ -336,18 +337,18 @@ def generate_html_from_schema(section_data, section_def):
     """
     section_num = section_def["number"]
     section_title = section_def["title"]
-    
+
     # Start with section wrapper
     html = f'<div class="section" id="section-{section_num}">\n'
     html += f'<h2>{section_num}. {section_title}</h2>\n'
-    
+
     # Generate HTML based on data structure
     html += generate_content_from_data(section_data, skip_keys=["footnotes"])
-    
+
     # Add footnotes if present
     if "footnotes" in section_data and section_data["footnotes"]:
         html += generate_footnotes_html(section_data["footnotes"])
-    
+
     html += '</div>\n'
     return html
 
@@ -357,22 +358,22 @@ def generate_content_from_data(data, level=0, skip_keys=None):
     """
     if skip_keys is None:
         skip_keys = []
-    
+
     html = ""
-    
+
     # Handle different data types
     if isinstance(data, dict):
         for key, value in data.items():
             if key in skip_keys:
                 continue
-                
+
             # Skip source references (they'll be handled with footnotes)
             if key == "source_ref":
                 continue
-                
+
             # Format key for display
             display_key = key.replace("_", " ").title()
-            
+
             if isinstance(value, dict):
                 # Recursive dictionary
                 if "value" in value and "unit" in value:
@@ -387,7 +388,7 @@ def generate_content_from_data(data, level=0, skip_keys=None):
                     else:
                         html += f"<h{level+3}>{display_key}</h{level+3}>\n"
                     html += generate_content_from_data(value, level+1, skip_keys)
-            
+
             elif isinstance(value, list):
                 # List of items
                 if value:  # Only process non-empty lists
@@ -412,17 +413,17 @@ def generate_content_from_data(data, level=0, skip_keys=None):
                             item_html = generate_content_from_data(item, level+1, skip_keys)
                             if item_html.strip():  # Only add if content was generated
                                 html += item_html
-            
+
             else:
                 # Simple value
                 if value is not None and value != "":
                     html += f"<p><strong>{display_key}:</strong> {value}</p>\n"
-    
+
     elif isinstance(data, list):
         # Top-level list - create appropriate representation
         for item in data:
             html += generate_content_from_data(item, level, skip_keys)
-    
+
     return html
 
 def generate_table_from_objects(items):
@@ -431,35 +432,35 @@ def generate_table_from_objects(items):
     """
     if not items:
         return ""
-        
+
     # Get all possible keys from all items
     all_keys = set()
     for item in items:
         all_keys.update(item.keys())
-    
+
     # Remove special keys
     exclude_keys = {"source_ref", "metrics", "breakdowns", "products", "assets", "categories"}
     display_keys = [k for k in all_keys if k not in exclude_keys]
-    
+
     html = '<table class="data-table">\n<thead>\n<tr>\n'
     for key in display_keys:
         html += f'<th>{key.replace("_", " ").title()}</th>\n'
     html += '</tr>\n</thead>\n<tbody>\n'
-    
+
     for item in items:
         html += '<tr>\n'
         for key in display_keys:
             value = item.get(key, "")
             html += f'<td>{value}</td>\n'
         html += '</tr>\n'
-        
+
         # Add nested data if present
         for special_key in ["metrics", "breakdowns", "products", "assets"]:
             if special_key in item and item[special_key]:
                 html += f'<tr><td colspan="{len(display_keys)}">'
                 html += generate_content_from_data({special_key: item[special_key]}, level=1)
                 html += '</td></tr>\n'
-    
+
     html += '</tbody>\n</table>\n'
     return html
 
@@ -468,7 +469,7 @@ def generate_footnotes_html(footnotes):
     html = '<div class="footnotes">\n'
     html += '<h3>Sources & References</h3>\n'
     html += '<ol>\n'
-    
+
     for footnote in footnotes:
         html += f'<li id="{footnote.get("id", "")}">'
         html += f'<strong>{footnote.get("document", "")}</strong>'
@@ -477,43 +478,43 @@ def generate_footnotes_html(footnotes):
         if footnote.get("section"):
             html += f', {footnote.get("section", "")}'
         html += '</li>\n'
-    
+
     html += '</ol>\n</div>\n'
     return html
 
 def parse_ai_response_to_schema(ai_text, section_def):
     """
     Parse AI generated text into structured data according to section schema
-    
+
     This would likely use a follow-up AI call to structure the data
     """
     schema = section_def.get("schema", {})
     schema_type = section_def.get("schema_type", section_def["title"].lower().replace(" ", "_"))
-    
+
     # Create a prompt for the AI to parse its own output into structured format
     parsing_prompt = f"""
     I've generated content for section {section_def['number']}: {section_def['title']}.
-    
+
     Original content:
     {ai_text}
-    
+
     Please extract the information from this content and format it according to this JSON schema:
     {json.dumps(schema, indent=2)}
-    
+
     For reference, here's an example of the expected format:
     {json.dumps(section_def.get('template', {}), indent=2)}
-    
+
     Only include information explicitly stated in the original content.
     Return ONLY the JSON with no additional text.
     """
-    
+
     # Use AI to parse the structured data (could use fact_model for precision)
     from api_client import create_fact_model
     fact_model = create_fact_model()
-    
+
     # Get structured data
     parsing_response = cached_generate_content(fact_model, parsing_prompt)
-    
+
     try:
         # Extract JSON from response (may need regex if AI adds explanatory text)
         import re
@@ -522,11 +523,58 @@ def parse_ai_response_to_schema(ai_text, section_def):
             structured_data = json.loads(json_match.group(1))
         else:
             structured_data = json.loads(parsing_response.text)
-        
+
         return structured_data
     except json.JSONDecodeError:
         # Fall back to empty structure if parsing fails
         print(f"Failed to parse JSON for section {section_def['number']}")
-        return schema
-    
+        return schema # Return the schema as a fallback
 
+def fix_html_file(profile_folder):
+    """Clean up HTML with a more direct approach to remove duplicate section titles"""
+    # Find and open the HTML file
+    html_files = glob.glob(f"{profile_folder}/*.html")
+    # Find the most recent company profile file
+    company_profile_files = [f for f in html_files if "company_profile" in f.lower()]
+
+    if not company_profile_files:
+        print(f"No company profile HTML files found in {profile_folder}")
+        return
+    html_file_path = max(company_profile_files, key=os.path.getctime)
+    with open(html_file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # Remove code markers
+    content = content.replace('```html', '')
+    content = content.replace('```', '')
+
+    # Split content by section divs to process each section separately
+    sections = re.split(r'(<div class="section"[^>]*>)', content)
+
+    cleaned_content = sections[0]  # Start with content before first section
+
+    for i in range(1, len(sections), 2):
+        if i+1 < len(sections):
+            div_start = sections[i]
+            section_content = sections[i+1]
+
+            # Extract section number from div
+            section_num_match = re.search(r'id="section-(\d+)"', div_start)
+            if section_num_match:
+                section_num = section_num_match.group(1)
+
+                # Remove standalone section title if it exists at start of section content
+                section_content = re.sub(f'^\\s*{section_num}\\.[^<>\n]+▼\\s*', '', section_content)
+
+                # Add cleaned div and content
+                cleaned_content += div_start + section_content
+            else:
+                # If no section number found, just add as is
+                cleaned_content += div_start + section_content
+
+    # Write cleaned content back to file
+    with open(html_file_path, 'w', encoding='utf-8') as f:
+        f.write(cleaned_content)
+
+    print(f"Cleaned up HTML file: {html_file_path}")
+    return html_file_path
