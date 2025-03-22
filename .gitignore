@@ -56,11 +56,13 @@ cover/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Generated output folders
+# Generated output folders and old files folder
 profile_*/
+old/
 
-# API cache
+# API cache and usage logs
 api_cache.json
+usage_log.json
 
 # Virtual environments
 .venv
