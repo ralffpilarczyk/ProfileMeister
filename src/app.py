@@ -27,6 +27,56 @@ from document_processor import load_document_content, get_current_documents
 from api_client import create_fact_model, create_insight_model, cached_generate_content
 from html_generator import create_profile_folder, save_section, load_section, validate_html, repair_html
 
+
+def test_api_connection():
+    """Test if the API key is working properly"""
+    try:
+        import google.generativeai as genai
+        from dotenv import load_dotenv
+        import os
+        
+        # Get the directory of the current file (app.py)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # Get the parent directory (ProfileMeister)
+        parent_dir = os.path.dirname(current_dir)
+        # Load .env from parent directory
+        dotenv_path = os.path.join(parent_dir, '.env')
+        load_dotenv(dotenv_path)
+        
+        # Get API key
+        api_key = os.getenv('GOOGLE_API_KEY')
+        if not api_key:
+            return "No API key found in environment variables"
+            
+        # Configure API
+        genai.configure(api_key=api_key)
+        
+        # Create a model with basic settings
+        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        
+        # Try a simple prompt
+        response = model.generate_content("Hello, please respond with 'API is working'")
+        return f"API test successful. Response: {response.text}"
+    except Exception as e:
+        import traceback
+        return f"API test failed: {str(e)}\n{traceback.format_exc()}"
+
+# Call the test function and print results
+print("\n==== TESTING API CONNECTION ====")
+print(test_api_connection())
+print("==== END API TEST ====\n")
+
+
+# ADD THE NEW CODE HERE - to find your .env file in parent directory
+from dotenv import load_dotenv
+# Get the directory of the current file (app.py)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# Get the parent directory (ProfileMeister)
+parent_dir = os.path.dirname(current_dir)
+# Load .env from parent directory
+dotenv_path = os.path.join(parent_dir, '.env')
+load_dotenv(dotenv_path)
+
 # Set page config
 st.set_page_config(
     page_title="ProfileMeister",
@@ -63,8 +113,10 @@ def estimate_processing_time(num_docs, num_sections, refinement_on, q_number, pa
     # Adjust for refinement steps
     refinement_factor = 3.0 if refinement_on else 1.0
     
-    # Adjust for Q&A depth
-    qa_factor = 1.0 + (q_number * 0.1)  # 10% increase per question
+    # Adjust for Q&A depth - ONLY when refinement is on
+    qa_factor = 1.0
+    if refinement_on:
+        qa_factor = 1.0 + (q_number * 0.1)  # 10% increase per question
     
     # Adjust for parallel processing
     parallel_factor = 1.0 / parallel_workers
@@ -152,6 +204,11 @@ def upload_documents_streamlit():
     
     st.markdown(f"**Uploaded {len(uploaded)} files:**{file_info}", unsafe_allow_html=True)
     st.write(f"Total size: {total_size / (1024 * 1024):.2f}MB")
+    
+    # Add debug print statements
+    print(f"Uploaded {len(uploaded)} documents")
+    for filename, content in uploaded.items():
+        print(f"  {filename}: {len(content)} bytes")
     
     return uploaded
 
@@ -416,47 +473,103 @@ def log_error(error_type, section_num, details):
     except Exception as e:
         print(f"Error logging failed: {str(e)}")
 
+
 @authentication_required
+def process_section_worker(section, documents, profile_folder):
+    """Process a section without touching Streamlit UI components"""
+    section_num = section["number"]
+    section_title = section["title"]
+    
+    try:
+        print(f"Worker thread: Processing section {section_num}")
+        
+        # Check if we already have a refined version of this section saved
+        existing_refined_content = load_section(profile_folder, f"{section_num}_refined")
+        if existing_refined_content:
+            print(f"Section {section_num}: Loaded previously refined section")
+            return section_num, existing_refined_content
+        
+        # Define a non-UI progress logger that just prints to console
+        def log_progress(message):
+            print(f"Section {section_num}: {message}")
+        
+        # Process the section without UI updates
+        from section_processor import process_section_in_parallel
+        from prompts import persona, analysis_specs, output_format
+        
+        # Process section without UI updates - IMPORTANT: CAPTURE THE RETURN VALUE!
+        section_result = process_section_in_parallel(
+            section, documents, persona, analysis_specs, output_format, profile_folder,
+            refinement_iterations=REFINEMENT_ITERATIONS,
+            progress_callback=log_progress,
+            q_number=Q_NUMBER
+        )
+        
+        print(f"Section {section_num}: Processing completed successfully")
+        # Make sure to return the proper tuple
+        return section_result  # This should be (section_num, content)
+        
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"ERROR IN SECTION {section_num}:")
+        print(error_detail)
+        
+        error_content = f'''
+        <div class="section" id="section-{section_num}">
+          <h2>{section_num}. {section_title}</h2>
+          <p class="error">ERROR: Could not process section {section_num}: {str(e)}</p>
+          <details>
+            <summary>View error details</summary>
+            <pre style="overflow:auto;max-height:300px;">{error_detail}</pre>
+          </details>
+        </div>
+        '''
+        # Make sure to return the proper tuple
+        return section_num, error_content
+    
 def process_documents():
     """Main function to run the ProfileMeister script"""
+    print("Inside process_documents") # Add this!
+    print(f"  st.session_state in process_documents: {st.session_state}")
     # App header
     st.title("ProfileMeister: Company Profile Generator")
     st.write("Upload PDF documents to generate a comprehensive company profile")
-    
+
     # Get API key
     api_key = api_key_input()
     if not api_key:
         return
-    
+
     # Initialize Google AI API
     import google.generativeai as genai
     genai.configure(api_key=api_key)
-    
+
     # Get configuration options
     config = display_configuration_options()
-    
+
     # Main content area
     # Set global values from config
     global MAX_WORKERS, REFINEMENT_ITERATIONS, Q_NUMBER
     MAX_WORKERS = config["max_workers"]
     REFINEMENT_ITERATIONS = config["refinement_iterations"]
     Q_NUMBER = config["q_number"]
-    
+
     # Create specialized models
     fact_model = create_fact_model()
     insight_model = create_insight_model()
-    
+
     # Upload documents
     uploaded = upload_documents_streamlit()
-    
+
     if not uploaded:
         st.info("Please upload documents to begin.")
-        
+
         # Show sample image
         st.subheader("How it works")
-        st.image("https://via.placeholder.com/800x400.png?text=ProfileMeister+Example+Output", 
-                 caption="Sample Company Profile Output", use_column_width=True)
-        
+        st.image("https://via.placeholder.com/800x400.png?text=ProfileMeister+Example+Output",
+                 caption="Sample Company Profile Output", use_container_width=True)
+
         # Show basic help
         st.markdown("""
         ### Getting Started
@@ -464,38 +577,38 @@ def process_documents():
         2. Adjust settings in the sidebar if needed
         3. Click "Generate Profile" to start the analysis
         4. View and export the generated company profile
-        
+
         ### Tips
         - For better results, upload documents with comprehensive company information
         - Enable refinements for higher quality output (but longer processing time)
         - You can download the final profile as HTML or PDF
         """)
         return
-    
+
     # Extract company name
     company_names = []
     for fn in uploaded.keys():
         match = re.match(r'^([A-Za-z]+)', fn)
         if match and match.group(1) not in ["monthly", "ProfileMeister"]:
             company_names.append(match.group(1))
-    
+
     company_name = company_names[0] if company_names else "Unknown_Company"
     st.write(f"Extracted company name: **{company_name}**")
-    
+
     # Check for resume processing
     resume_folder, resume_metadata = check_resume_processing(company_name)
     if resume_folder and resume_metadata:
         st.info(f"Found existing profile folder for {company_name} created on {resume_metadata.get('creation_time', 'unknown date')}")
-        
+
         # Offer to resume
         resume_options = ["Start new profile", "Resume existing profile"]
         resume_choice = st.radio("What would you like to do?", resume_options)
-        
+
         if resume_choice == "Resume existing profile":
             # Set profile folder to existing folder
             profile_folder = resume_folder
             timestamp = resume_folder.split('_')[-1]
-            
+
             # Check for sections that are already processed
             processed_sections = []
             for section_file in glob.glob(f"{profile_folder}/section_*_refined.html"):
@@ -504,7 +617,7 @@ def process_documents():
                     processed_sections.append(section_num)
                 except:
                     pass
-            
+
             if processed_sections:
                 st.success(f"Found {len(processed_sections)} already processed sections: {', '.join(map(str, sorted(processed_sections)))}")
             else:
@@ -517,16 +630,16 @@ def process_documents():
         # Create profile folder
         profile_folder, timestamp = create_profile_folder(company_name)
         st.write(f"Created profile folder: {profile_folder}")
-    
+
     # Load section definitions
     from section_definitions import sections
-    
+
     # Allow section selection
     selected_sections = select_sections(sections)
-    
+
     # Add a divider
     st.markdown("---")
-    
+
     # Estimate processing time
     est_minutes = estimate_processing_time(
         num_docs=len(uploaded),
@@ -535,35 +648,42 @@ def process_documents():
         q_number=Q_NUMBER,
         parallel_workers=MAX_WORKERS
     )
-    
+
     # Display estimate
     st.write(f"### Estimated Processing Time: {est_minutes:.1f} minutes")
-    
+
     # Display configuration summary
     st.write(f"**Configuration:** {MAX_WORKERS} parallel workers, Refinements: {'On' if REFINEMENT_ITERATIONS > 0 else 'Off'}, Q&A Depth: {Q_NUMBER}")
-    
+
     if "running" not in st.session_state:
         st.session_state.running = False
-    
+
+    print(f"Before button - st.session_state.running: {st.session_state.running}") # ADDED
+
     # Generate button
     if st.button("Generate Profile", type="primary", disabled=st.session_state.running):
+        print("Generate Profile button pressed") # ADDED
         st.session_state.running = True
-        
+        print(f"After setting running=True - st.session_state.running: {st.session_state.running}") # ADDED
+
         # Create session state for progress tracking
         if 'processing_complete' not in st.session_state:
             st.session_state.processing_complete = False
-        
+        # CHANGED: Add a session state for errors
+        if 'processing_errors' not in st.session_state:
+            st.session_state.processing_errors = []
+
         # Set start time
         global start_time
         start_time = time.time()
-            
+
         # Process document content
         status_container = st.empty()
         status_container.write(f"{get_elapsed_time()}: Processing documents...")
         progress_bar = st.progress(0)
-        
+
         documents = load_document_content(uploaded)
-        
+
         # Save initial metadata
         metadata = {
             "company_name": company_name,
@@ -576,7 +696,7 @@ def process_documents():
         metadata_path = f"{profile_folder}/metadata.json"
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
-        
+
         # Prepare to display section results
         st.subheader("Processing Sections")
         section_container = st.container()
@@ -586,98 +706,98 @@ def process_documents():
                 section_expanders[section["number"]] = st.expander(
                     f"Section {section['number']}: {section['title']}"
                 )
-        
+
         # Process sections in parallel
         status_container.write(f"{get_elapsed_time()}: PROCESSING SECTIONS IN PARALLEL (using {MAX_WORKERS} workers)")
         from prompts import persona, analysis_specs, output_format
-        
+
         # Create empty charts container for progress visualization
         charts_container = st.container()
-        
+
         # Helper function to process a section
-        def process_section(section):
-            """Process a single section and return its content"""
-            try:
-                section_num = section["number"]
-                section_title = section["title"]
-                
-                # Check if we already have a refined version of this section saved
-                existing_refined_content = load_section(profile_folder, f"{section_num}_refined")
-                if existing_refined_content:
-                    section_expanders[section_num].write(f"{get_elapsed_time()} Section {section_num}: Loaded previously refined section")
-                    return section_num, existing_refined_content
-                
-                # Setup a placeholder for detailed progress information
-                progress_placeholder = section_expanders[section_num].empty()
-                
-                # Define a custom progress logger for the section processor
-                def update_progress_log(message):
-                    current_time = get_elapsed_time()
-                    progress_placeholder.write(f"{current_time}: {message}")
-                
-                # Process the section with custom progress reporting
-                section_start_time = time.time()
-                from section_processor import process_section_in_parallel
-                result = process_section_in_parallel(
-                    section, documents, persona, analysis_specs, output_format, profile_folder, 
-                    refinement_iterations=REFINEMENT_ITERATIONS,
-                    progress_callback=update_progress_log,
-                    q_number=Q_NUMBER
-                )
-                section_processing_time = time.time() - section_start_time
-                
-                # Update metadata for resume capability
-                try:
-                    with open(metadata_path, "r", encoding="utf-8") as f:
-                        metadata = json.load(f)
-                    metadata["sections_completed"] = metadata.get("sections_completed", 0) + 1
-                    metadata["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    with open(metadata_path, "w", encoding="utf-8") as f:
-                        json.dump(metadata, f, indent=2)
-                except Exception as e:
-                    print(f"Error updating metadata: {str(e)}")
-                
-                # Add processing time info
-                progress_placeholder.write(f"Section completed in {section_processing_time:.1f} seconds")
-                
-                return section_num, result[1]
-            except Exception as e:
-                status_container.error(f"Error processing section {section['number']}: {str(e)}")
-                log_error("section_processing", section["number"], e)
-                error_content = f'''
-                <div class="section" id="section-{section["number"]}">
-                  <h2>{section["number"]}. {section["title"]}</h2>
-                  <p class="error">ERROR: Could not process section {section["number"]}: {str(e)}</p>
-                </div>
-                '''
-                return section["number"], error_content
-        
+        # def process_section(section):
+        #     """Process a single section and return its content"""
+        #     try:
+        #         section_num = section["number"]
+        #         section_title = section["title"]
+
+        #         # Check if we already have a refined version of this section saved
+        #         existing_refined_content = load_section(profile_folder, f"{section_num}_refined")
+        #         if existing_refined_content:
+        #             section_expanders[section_num].write(f"{get_elapsed_time()} Section {section_num}: Loaded previously refined section")
+        #             return section_num, existing_refined_content
+
+        #         # Setup a placeholder for detailed progress information
+        #         progress_placeholder = section_expanders[section_num].empty()
+
+        #         # Define a custom progress logger for the section processor
+        #         def update_progress_log(message):
+        #             current_time = get_elapsed_time()
+        #             progress_placeholder.write(f"{current_time}: {message}")
+
+        #         # Process the section with custom progress reporting
+        #         section_start_time = time.time()
+        #         from section_processor import process_section_in_parallel
+        #         result = process_section_in_parallel(
+        #             section, documents, persona, analysis_specs, output_format, profile_folder,
+        #             refinement_iterations=REFINEMENT_ITERATIONS,
+        #             progress_callback=update_progress_log,
+        #             q_number=Q_NUMBER
+        #         )
+        #         section_processing_time = time.time() - section_start_time
+
+        #         # Update metadata for resume capability
+        #         try:
+        #             with open(metadata_path, "r", encoding="utf-8") as f:
+        #                 metadata = json.load(f)
+        #             metadata["sections_completed"] = metadata.get("sections_completed", 0) + 1
+        #             metadata["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        #             with open(metadata_path, "w", encoding="utf-8") as f:
+        #                 json.dump(metadata, f, indent=2)
+        #         except Exception as e:
+        #             print(f"Error updating metadata: {str(e)}")
+
+        #         # Add processing time info
+        #         progress_placeholder.write(f"Section completed in {section_processing_time:.1f} seconds")
+
+        #         return section_num, result[1]
+        #     except Exception as e:
+        #         status_container.error(f"Error processing section {section['number']}: {str(e)}")
+        #         log_error("section_processing", section["number"], e)
+        #         error_content = f'''
+        #         <div class="section" id="section-{section["number"]}">
+        #           <h2>{section["number"]}. {section["title"]}</h2>
+        #           <p class="error">ERROR: Could not process section {section["number"]}: {str(e)}</p>
+        #         </div>
+        #         '''
+        #         return section_num, error_content
+
         # Helper function to update charts
         def update_progress_charts(completed, total, elapsed_seconds):
             with charts_container:
                 # Clear container
                 st.empty()
-                
+
                 # Create columns for charts
                 col1, col2 = st.columns(2)
-                
+
                 with col1:
                     # Progress percentage
                     percent_complete = int((completed / total) * 100)
                     st.subheader(f"Progress: {percent_complete}%")
-                    
+
                     # Completion estimate
                     if completed > 0:
                         seconds_per_section = elapsed_seconds / completed
                         remaining_sections = total - completed
                         estimated_seconds_left = remaining_sections * seconds_per_section
                         estimated_minutes_left = estimated_seconds_left / 60
-                        
+
                         if estimated_minutes_left > 60:
                             st.info(f"Estimated completion in {estimated_minutes_left/60:.1f} hours")
                         else:
                             st.info(f"Estimated completion in {estimated_minutes_left:.1f} minutes")
-                
+
                 with col2:
                     # Basic chart showing sections left
                     chart_data = {
@@ -686,18 +806,20 @@ def process_documents():
                     }
                     st.write("Sections Progress")
                     st.bar_chart(chart_data, x="Status", y="Count")
-        
+
+        # Process sections with ThreadPoolExecutor
         # Process sections with ThreadPoolExecutor
         results = {}
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            # Submit section processing tasks
-            future_to_section = {executor.submit(process_section, section): section for section in selected_sections}
+            # Submit section processing tasks using worker function
+            future_to_section = {executor.submit(process_section_worker, section, documents, profile_folder): section for section in selected_sections}
             
             # Collect results as they complete
             completed = 0
             for future in concurrent.futures.as_completed(future_to_section):
                 section = future_to_section[future]
                 try:
+                    # Get result from worker thread
                     section_num, content = future.result()
                     results[section_num] = content
                     
@@ -705,26 +827,47 @@ def process_documents():
                     completed += 1
                     progress = completed / len(selected_sections)
                     progress_bar.progress(progress)
-                    
+
                     # Update expander with content
                     section_expanders[section_num].markdown(content, unsafe_allow_html=True)
-                    
+
                     # Update progress charts
                     elapsed_time = time.time() - start_time
                     update_progress_charts(completed, len(selected_sections), elapsed_time)
-                    
+
                     status_container.write(f"{get_elapsed_time()} Section {section_num}: Successfully completed")
                 except Exception as e:
-                    status_container.error(f"Section {section['number']}: Error: {str(e)}")
+                    # Get section number safely
+                    section_num = section["number"]
+                    
+                    # Get full traceback
+                    import traceback
+                    error_detail = traceback.format_exc()
+                    
+                    # Log the error to console for debugging
+                    print(f"ERROR IN SECTION {section_num}:")
+                    print(error_detail)
+                    
+                    # Display in UI
+                    status_container.error(f"Section {section_num}: Error: {str(e)}")
+                    
+                    # Store detailed error in session state
+                    st.session_state.processing_errors.append(f"Section {section_num}: {str(e)}\n{error_detail}")
+                    
+                    # Create error content with more details
                     error_content = f'''
-                    <div class="section" id="section-{section["number"]}">
-                      <h2>{section["number"]}. {section["title"]}</h2>
-                      <p class="error">ERROR: Could not process section {section["number"]}: {str(e)}</p>
+                    <div class="section" id="section-{section_num}">
+                    <h2>{section_num}. {section["title"]}</h2>
+                    <p class="error">ERROR: Could not process section {section_num}: {str(e)}</p>
+                    <details>
+                        <summary>View error details</summary>
+                        <pre style="overflow:auto;max-height:300px;">{error_detail}</pre>
+                    </details>
                     </div>
                     '''
-                    results[section["number"]] = error_content
-                    section_expanders[section["number"]].markdown(error_content, unsafe_allow_html=True)
-        
+                    results[section_num] = error_content
+                    section_expanders[section_num].markdown(error_content, unsafe_allow_html=True)
+
         # Update metadata to completed
         try:
             with open(metadata_path, "r", encoding="utf-8") as f:
@@ -735,12 +878,12 @@ def process_documents():
                 json.dump(metadata, f, indent=2)
         except Exception as e:
             print(f"Error updating metadata: {str(e)}")
-        
+
         # Generate complete HTML profile
         st.subheader("Generating Complete HTML Profile")
         status_container.write(f"{get_elapsed_time()}: Generating complete HTML profile...")
         from html_generator import generate_full_html_profile
-        
+
         # Get section contents in correct order
         ordered_section_contents = []
         for section in selected_sections:
@@ -751,37 +894,37 @@ def process_documents():
             </div>
             ''')
             ordered_section_contents.append(section_content)
-        
+
         # Generate the complete HTML
         full_profile = generate_full_html_profile(company_name, selected_sections, ordered_section_contents)
-        
+
         # Save the final compiled profile as HTML
         final_profile_path = f"{profile_folder}/{company_name}_Company_Profile_{timestamp}.html"
         with open(final_profile_path, "w", encoding="utf-8") as f:
             f.write(full_profile)
         status_container.success(f"{get_elapsed_time()} Project: Complete HTML profile saved to {final_profile_path}")
-        
+
         # Clean up HTML file
         fix_html_file(company_name)
-        
+
         # Provide preview and download options
         with open(final_profile_path, "r", encoding="utf-8") as f:
             html_content = f.read()
-        
+
         # Add iframe to preview HTML directly in Streamlit
         st.subheader("Profile Preview")
         st.components.v1.html(html_content, height=600, scrolling=True)
-        
+
         # Add easy ways to access the full HTML and PDF
         st.subheader("Export Options")
-        
+
         col1, col2, col3 = st.columns(3)
-        
+
         # Column 1: Download HTML file
         with col1:
             st.markdown("### Download HTML")
             st.markdown(download_html(html_content, f"{company_name}_profile.html"), unsafe_allow_html=True)
-        
+
         # Column 2: Generate and download PDF
         with col2:
             st.markdown("### Download PDF")
@@ -790,15 +933,15 @@ def process_documents():
                     try:
                         # Import the PDF conversion module
                         from pdf_conversion import generate_pdf_from_html, get_pdf_download_link
-                        
+
                         # Generate PDF content
                         pdf_content = generate_pdf_from_html(html_content)
                         pdf_path = f"{profile_folder}/{company_name}_Company_Profile_{timestamp}.pdf"
-                        
+
                         # Save PDF to file
                         with open(pdf_path, 'wb') as f:
                             f.write(pdf_content)
-                        
+
                         # Provide download link
                         st.markdown(
                             get_pdf_download_link(pdf_content, f"{company_name}_profile.pdf"),
@@ -807,25 +950,25 @@ def process_documents():
                         st.success(f"PDF generated and saved to: {pdf_path}")
                     except Exception as e:
                         st.error(f"Error generating PDF: {str(e)}")
-                        st.info("PDF generation requires WeasyPrint or pdfkit. Install with: pip install weasyprint")
-        
+                        st.info("PDF generation requires WeasyPrint or pdfkit. Install with: pip install weasyprint or pip install pdfkit")
+
         # Column 3: Copy HTML to clipboard using a text area
         with col3:
             st.markdown("### Copy HTML")
             st.write("Click, Ctrl+A, Ctrl+C:")
             st.text_area("HTML Content", value=html_content, height=100)
-        
+
         # Email delivery option
         st.subheader("Email Delivery")
         email_col1, email_col2 = st.columns(2)
-        
+
         with email_col1:
             recipient_email = st.text_input("Email address:", placeholder="recipient@example.com")
-        
+
         with email_col2:
             attachment_options = ["HTML", "PDF", "Both"]
             attachment_type = st.selectbox("Attachment format:", attachment_options)
-        
+
         if st.button("Send Email"):
             if not recipient_email:
                 st.error("Please enter a valid email address")
@@ -836,7 +979,7 @@ def process_documents():
                         attachments = []
                         if attachment_type in ["HTML", "Both"]:
                             attachments.append((final_profile_path, f"{company_name}_profile.html"))
-                        
+
                         if attachment_type in ["PDF", "Both"]:
                             pdf_path = f"{profile_folder}/{company_name}_Company_Profile_{timestamp}.pdf"
                             if not os.path.exists(pdf_path):
@@ -846,7 +989,7 @@ def process_documents():
                                 with open(pdf_path, 'wb') as f:
                                     f.write(pdf_content)
                             attachments.append((pdf_path, f"{company_name}_profile.pdf"))
-                        
+
                         # Send email for each attachment
                         success = True
                         for attachment_path, attachment_name in attachments:
@@ -860,7 +1003,7 @@ def process_documents():
                             </body>
                             </html>
                             """
-                            
+
                             success, message = send_email(
                                 receiver_email=recipient_email,
                                 subject=f"{company_name} Company Profile",
@@ -868,30 +1011,30 @@ def process_documents():
                                 attachment_path=attachment_path,
                                 attachment_name=attachment_name
                             )
-                            
+
                             if not success:
                                 st.error(message)
                                 break
-                        
+
                         if success:
                             st.success("Email sent successfully!")
                     except Exception as e:
                         st.error(f"Error sending email: {str(e)}")
                         st.info("Email delivery requires SMTP configuration. Please set EMAIL_USER and EMAIL_PASSWORD environment variables.")
-        
+
         # Show file location
         st.info(f"The HTML profile has also been saved to: {final_profile_path}")
-        
+
         # Add feedback mechanism
         st.subheader("Feedback")
         feedback_col1, feedback_col2 = st.columns(2)
-        
+
         with feedback_col1:
             st.write("Was this profile helpful?")
             if st.button("👍 Yes"):
                 st.success("Thank you for your feedback!")
                 # Could log positive feedback
-                
+
         with feedback_col2:
             st.write("Any issues with the profile?")
             if st.button("👎 No"):
@@ -899,20 +1042,32 @@ def process_documents():
                 if st.button("Submit Feedback"):
                     st.success("Thank you for your feedback! We'll use it to improve.")
                     # Could log negative feedback with details
-        
+
         # End timing and calculate elapsed time
         end_time = time.time()
         elapsed_time = end_time - start_time
         elapsed_minutes = elapsed_time / 60
-        
+
         st.success(f"{get_elapsed_time()}: EXECUTION COMPLETE")
         st.write(f"Total execution time: {elapsed_time:.2f} seconds ({elapsed_minutes:.2f} minutes)")
-        
+
         # Reset running state
-        st.session_state.running = False
-        
+        st.session_state.running = False # CHANGED
+
         # Set session state to complete
         st.session_state.processing_complete = True
+
+    # CHANGED:  Display any errors that occurred
+    if st.session_state.get('processing_errors'):
+        st.error("Errors occurred during processing:")
+        for error in st.session_state.processing_errors:
+            st.write(error)
+    #Moved this outside the button
+    print(f"After button - st.session_state.running: {st.session_state.running}") # ADDED
+
+    if st.session_state.get('processing_complete'): #use get and check
+        print("Resetting st.session_state.running") # ADDED
+        st.session_state.running = False
 
 def fix_html_file(company_name=None):
     """Clean up HTML with a more direct approach to remove duplicate section titles"""
@@ -962,7 +1117,7 @@ def fix_html_file(company_name=None):
                 section_num = section_num_match.group(1)
                 
                 # Remove standalone section title if it exists at start of section content
-                section_content = re.sub(f'^\s*{section_num}\.[^<>\n]+▼\s*', '', section_content)
+                section_content = re.sub(f'^\\s*{section_num}\\.[^<>\n]+▼\\s*', '', section_content)
                 
                 # Add cleaned div and content
                 cleaned_content += div_start + section_content
@@ -980,14 +1135,14 @@ def fix_html_file(company_name=None):
 if __name__ == "__main__":
     st.sidebar.title("ProfileMeister")
     st.sidebar.image("https://via.placeholder.com/150x150.png?text=PM", width=150)
-    st.sidebar.write("AI-Powered Company Profile Generator")
+    st.sidebar.write("LLM-Powered Company Profile Generator")
     
     # Add user info to sidebar if authenticated
     if st.session_state.authenticated:
         st.sidebar.success(f"Logged in as: {st.session_state.email}")
         if st.sidebar.button("Log Out"):
             st.session_state.authenticated = False
-            st.experimental_rerun()
+            st.rerun()
     
     # Add version and contact info to sidebar
     st.sidebar.markdown("---")

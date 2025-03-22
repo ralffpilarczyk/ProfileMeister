@@ -44,6 +44,7 @@ def cached_generate_content(model, prompt, section_num=None, cache_enabled=True,
     if cache_key in api_cache:
         print(f"{get_elapsed_time()} {'Section ' + str(section_num) + ':' if section_num else 'Project:'} Using cached response")
         cached_response = api_cache[cache_key]
+        print(f"  Cache key: {cache_key},  Cached response starts with: {cached_response[:50]}...")
         # Create a response-like object with a text attribute
         class CachedResponse:
             def __init__(self, text):
@@ -55,6 +56,10 @@ def cached_generate_content(model, prompt, section_num=None, cache_enabled=True,
     
     start_time = time.time()
     overall_timeout = timeout  # Overall timeout in seconds
+    
+    # Enhanced debugging
+    print(f"{get_elapsed_time()} {'Section ' + str(section_num) + ':' if section_num else 'Project:'} DEBUG: Starting API call with model {model_name}")
+    print(f"{get_elapsed_time()} {'Section ' + str(section_num) + ':' if section_num else 'Project:'} DEBUG: Prompt length: {len(str(prompt))} chars")
     
     # Try with exponential backoff
     for retry in range(max_retries):
@@ -73,7 +78,9 @@ def cached_generate_content(model, prompt, section_num=None, cache_enabled=True,
             print(f"{get_elapsed_time()} {'Section ' + str(section_num) + ':' if section_num else 'Project:'} API attempt {retry+1}, timeout: {attempt_timeout:.1f}s")
             
             # Make the API call
+            print(f"{get_elapsed_time()} {'Section ' + str(section_num) + ':' if section_num else 'Project:'} DEBUG: Calling generate_content API")
             response = model.generate_content(prompt)
+            print(f"{get_elapsed_time()} {'Section ' + str(section_num) + ':' if section_num else 'Project:'} DEBUG: API call successful")
             
             # Success - cache the result
             api_cache[cache_key] = response.text
@@ -86,9 +93,12 @@ def cached_generate_content(model, prompt, section_num=None, cache_enabled=True,
             return response
             
         except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
             # If we've exceeded the timeout, raise the error
             if isinstance(e, TimeoutError) or time.time() - start_time > overall_timeout:
                 print(f"{get_elapsed_time()} {'Section ' + str(section_num) + ':' if section_num else 'Project:'} Request timed out after {time.time() - start_time:.1f} seconds")
+                print(f"ERROR DETAILS: {error_detail}")
                 raise TimeoutError(f"Request timed out after {overall_timeout} seconds")
                 
             # Check if this is a rate limit error (429)
@@ -98,8 +108,10 @@ def cached_generate_content(model, prompt, section_num=None, cache_enabled=True,
                 print(f"{get_elapsed_time()} {'Section ' + str(section_num) + ':' if section_num else 'Project:'} Rate limit hit. Waiting {wait_time:.2f} seconds before retry {retry+1}/{max_retries}")
                 time.sleep(wait_time)
             else:
-                # Log non-rate limit errors
+                # Log non-rate limit errors with full details
                 print(f"{get_elapsed_time()} {'Section ' + str(section_num) + ':' if section_num else 'Project:'} Error: {str(e)}")
+                print(f"STACK TRACE: {error_detail}")
+                print(f"ERROR TYPE: {type(e).__name__}")
                 # If it's not a rate limit or we're out of retries, raise the error
                 raise e
 

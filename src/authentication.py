@@ -110,6 +110,8 @@ def initialize_session_state():
         st.session_state.verification_code = ""
     if 'code_expiry' not in st.session_state:
         st.session_state.code_expiry = 0
+    if 'processing_errors' not in st.session_state:  
+        st.session_state.processing_errors = []
 
 def authentication_required(func):
     """Decorator to require authentication before accessing a function"""
@@ -149,7 +151,7 @@ def show_login_screen():
                 if success:
                     st.session_state.verification_sent = True
                     st.success(f"Verification code sent to {email}")
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error(message)
                     st.session_state.verification_sent = False
@@ -162,7 +164,7 @@ def show_login_screen():
         if time.time() > st.session_state.code_expiry:
             st.error("Verification code has expired. Please request a new one.")
             st.session_state.verification_sent = False
-            st.experimental_rerun()
+            st.rerun()
             
         entered_code = st.text_input("Enter verification code:", key="code_input")
         
@@ -173,14 +175,14 @@ def show_login_screen():
                     st.session_state.authenticated = True
                     log_user_access(st.session_state.email)
                     st.success("Verification successful!")
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("Invalid verification code. Please try again.")
         
         with col2:
             if st.button("Cancel"):
                 st.session_state.verification_sent = False
-                st.experimental_rerun()
+                st.rerun()
                 
         # Show expiry countdown
         remaining_seconds = int(st.session_state.code_expiry - time.time())
