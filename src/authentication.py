@@ -106,6 +106,18 @@ def show_login_screen():
     """Display the login screen to the user"""
     st.title("ProfileMeister - Authentication Required")
 
+    # TEMPORARY BYPASS FOR TESTING - Top level of function
+    if st.checkbox("Developer Mode (Bypass Email Verification)"):
+        dev_password = st.text_input("Developer Password", type="password")
+        if st.button("Developer Login") and dev_password == "profilemeister":
+            st.session_state.authenticated = True
+            log_user_access("developer@bypass.mode")  # Log the access
+            st.success("Developer authentication successful!")
+            st.rerun()
+            return  # Only return here if authentication is successful
+
+    # Normal authentication flow continues below
+    
     # Step 1: Email input
     if not st.session_state.verification_sent:
         st.write("Please enter your work email address to continue.")
