@@ -47,15 +47,8 @@ MAX_UPLOAD_SIZE_MB = 20
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
 def api_key_input():
-    """Get Google API Key from the user if not set in environment variables"""
-    # Get API key from environment if available
-    api_key = os.getenv('GOOGLE_API_KEY')
-
-    if api_key:
-        st.sidebar.success("API Key detected in environment")
-        return api_key
-
-    # Otherwise prompt user for API key
+    """Get Google API Key from the user"""
+    # Always prompt for API key on Streamlit Cloud
     st.sidebar.header("Google API Key Required")
     api_key = st.sidebar.text_input(
         "Enter your Google Generative AI API key:",
