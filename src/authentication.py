@@ -8,17 +8,19 @@ import re
 import json
 import random
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import streamlit as st
 
 # Add SendGrid imports
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+import base64
 
 # Configuration
 ALLOWED_DOMAIN = "sc.com"  # Only emails with this domain are allowed
 CODE_EXPIRY_SECONDS = 300  # Verification codes expire after 5 minutes
 USAGE_LOG_FILE = "usage_log.json"  # File to track usage statistics
+REPORT_TRACKER = "email_report_tracker.json"  # File to track email reports
 
 def send_verification_code(email, code):
     """Send verification code using SendGrid"""
@@ -29,7 +31,7 @@ def send_verification_code(email, code):
         
         # Create message with improved sender display name
         message = Mail(
-            from_email=(from_email, "ProfileMeister Verification"),  # (email, display_name) format
+            from_email=(from_email, "ProfileMeister Verification"),
             to_emails=email,
             subject="Your ProfileMeister Verification Code",
             html_content=f"""
@@ -65,6 +67,103 @@ def is_valid_email(email):
     domain = email.split('@')[-1]
     return domain.lower() == ALLOWED_DOMAIN.lower()
 
+def should_send_daily_report():
+    """Check if it's time for a daily report (24+ hours since last report)"""
+    current_time = datetime.now()
+    
+    # Load last report time
+    if os.path.exists(REPORT_TRACKER):
+        try:
+            with open(REPORT_TRACKER, 'r') as f:
+                tracker = json.load(f)
+                last_report_time = datetime.fromisoformat(tracker.get('last_report', '2000-01-01'))
+        except Exception as e:
+            print(f"Error reading report tracker: {e}")
+            last_report_time = datetime.fromisoformat('2000-01-01')
+    else:
+        # No previous report
+        last_report_time = datetime.fromisoformat('2000-01-01')
+    
+    # Check if 24+ hours have passed
+    hours_since_last = (current_time - last_report_time).total_seconds() / 3600
+    should_send = hours_since_last >= 24
+    
+    # Update the tracker file if sending
+    if should_send:
+        try:
+            with open(REPORT_TRACKER, 'w') as f:
+                json.dump({'last_report': current_time.isoformat()}, f)
+            print(f"Updated report tracker, next email in 24 hours")
+        except Exception as e:
+            print(f"Error updating report tracker: {e}")
+    
+    return should_send
+
+def export_logs_via_email():
+    """Send daily usage log report via email"""
+    try:
+        if os.path.exists(USAGE_LOG_FILE):
+            with open(USAGE_LOG_FILE, 'r') as f:
+                log_data = json.load(f)
+            
+            # Get today's logins and yesterday's logins
+            today = datetime.now().strftime("%Y-%m-%d")
+            yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            
+            today_logins = [entry for entry in log_data if entry['timestamp'].startswith(today)]
+            yesterday_logins = [entry for entry in log_data if entry['timestamp'].startswith(yesterday)]
+            
+            # Get unique users
+            all_users = set(entry['email'] for entry in log_data)
+            today_users = set(entry['email'] for entry in today_logins)
+            yesterday_users = set(entry['email'] for entry in yesterday_logins)
+            
+            # Create email content
+            html_content = f"""
+            <h2>ProfileMeister Daily Usage Report</h2>
+            <h3>Summary</h3>
+            <ul>
+                <li>Total users to date: {len(all_users)}</li>
+                <li>Total login events: {len(log_data)}</li>
+                <li>Users today: {len(today_users)}</li>
+                <li>Users yesterday: {len(yesterday_users)}</li>
+            </ul>
+            
+            <h3>Today's Activity ({today})</h3>
+            <ul>
+            {"".join(f"<li>{entry['email']} - {entry['timestamp']}</li>" for entry in today_logins[-10:])}
+            </ul>
+            
+            <p>Full logs are attached.</p>
+            """
+            
+            # Create attachment
+            encoded_content = base64.b64encode(json.dumps(log_data, indent=2).encode()).decode()
+            attachment = Attachment()
+            attachment.file_content = FileContent(encoded_content)
+            attachment.file_name = FileName("profilemeister_usage.json")
+            attachment.file_type = FileType("application/json")
+            attachment.disposition = Disposition("attachment")
+            
+            # Create and send email
+            sendgrid_key = st.secrets["general"]["SENDGRID_API_KEY"]
+            from_email = st.secrets["general"]["FROM_EMAIL"]
+            
+            message = Mail(
+                from_email=(from_email, "ProfileMeister Reports"),
+                to_emails=from_email,  # Send to yourself
+                subject=f"ProfileMeister Daily Report - {today}",
+                html_content=html_content
+            )
+            message.attachment = attachment
+            
+            sg = SendGridAPIClient(sendgrid_key)
+            sg.send(message)
+            print(f"Daily report email sent successfully")
+            
+    except Exception as e:
+        print(f"Error sending daily report: {str(e)}")
+
 def log_user_access(email):
     """Log user access for analytics"""
     try:
@@ -83,6 +182,13 @@ def log_user_access(email):
         # Save updated log
         with open(USAGE_LOG_FILE, 'w') as f:
             json.dump(log_data, f, indent=2)
+
+        # Check if it's time for a daily report
+        try:
+            if should_send_daily_report():
+                export_logs_via_email()
+        except Exception as e:
+            print(f"Error in daily report check: {str(e)}")
 
         return True
     except Exception as e:
@@ -120,7 +226,7 @@ def show_login_screen():
     
     # Make sure session state is initialized first
     initialize_session_state()
-
+    
     # Handle different stages of authentication
     if st.session_state.auth_stage == "email_input":
         st.write("Please enter your work email address to continue.")
@@ -129,7 +235,7 @@ def show_login_screen():
         with st.form("email_form"):
             email = st.text_input("Email (@sc.com domain required):", key="email_input")
             submit_button = st.form_submit_button("Send Verification Code")
-
+            
             if submit_button:
                 if not email:
                     st.error("Email address is required.")
@@ -166,6 +272,7 @@ def show_login_screen():
             # Provide a button to start over
             if st.button("Request New Code"):
                 st.session_state.auth_stage = "email_input"
+                st.rerun()
             return
             
         # Show time remaining
@@ -185,10 +292,11 @@ def show_login_screen():
                     st.session_state.authenticated = True
                     log_user_access(st.session_state.email)
                     st.success("Verification successful!")
-                    st.rerun()  # Force a complete rerun to proceed to main app
+                    st.rerun()  # Force a rerun to proceed to main app
                 else:
                     st.error("Invalid verification code. Please try again.")
-
+        
         # Cancel button outside the form
         if st.button("Cancel", key="cancel_button"):
             st.session_state.auth_stage = "email_input"
+            st.rerun()
