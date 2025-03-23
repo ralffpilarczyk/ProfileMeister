@@ -27,6 +27,11 @@ def apply_auth_styling():
     """Apply modern styling for authentication screens"""
     st.markdown("""
     <style>
+        /* CRITICAL: Hide sidebar completely */
+        section[data-testid="stSidebar"] {
+            display: none !important;
+        }
+        
         /* Main container */
         .main .block-container {
             max-width: 800px;
@@ -103,6 +108,17 @@ def apply_auth_styling():
             color: #666;
             text-align: center;
             margin: 1rem 0;
+        }
+        
+        /* Disclaimer */
+        .disclaimer {
+            margin-top: 2rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-left: 4px solid #f0ad4e;
+            color: #666;
+            font-size: 0.9rem;
+            border-radius: 4px;
         }
         
         /* Mobile optimization */
@@ -345,6 +361,9 @@ def show_login_screen():
     # App title and subtitle
     st.markdown('<h1 class="app-title">ProfileMeister</h1>', unsafe_allow_html=True)
     st.markdown('<p class="app-subtitle">Create comprehensive company profiles using AI</p>', unsafe_allow_html=True)
+    
+    # Disclaimer under title
+    st.markdown('<div class="disclaimer">ProfileMeister is an LLM-based company profile generator. Outputs may not be correct or complete and need to be checked.</div>', unsafe_allow_html=True)
     
     # Authentication container
     st.markdown('<div class="auth-container">', unsafe_allow_html=True)
