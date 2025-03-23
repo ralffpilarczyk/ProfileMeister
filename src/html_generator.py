@@ -532,6 +532,10 @@ def parse_ai_response_to_schema(ai_text, section_def):
 
 def fix_html_file(profile_folder):
     """Clean up HTML with improved handling of markdown and duplicates"""
+    import glob
+    import os
+    import re
+    
     html_files = glob.glob(f"{profile_folder}/*.html")
     # Find the most recent company profile file
     company_profile_files = [f for f in html_files if "company_profile" in f.lower()]
@@ -545,8 +549,8 @@ def fix_html_file(profile_folder):
         content = f.read()
 
     # Remove markdown code blocks
-    content = re.sub(r'```html', '', content)
-    content = re.sub(r'```', '', content)
+    content = content.replace("```html", "")
+    content = content.replace("```", "")
 
     # Remove duplicate section titles that might appear after the h2 heading
     sections = re.split(r'(<div class="section"[^>]*>)', content)
@@ -567,26 +571,19 @@ def fix_html_file(profile_folder):
                 if h2_match:
                     section_title = h2_match.group(1).strip()
                     
-                    # Remove any duplicate titles after the h2
-                    section_content = re.sub(
-                        r'<h2[^>]*>\s*' + section_num + r'\.\s*' + re.escape(section_title) + r'\s*</h2>\s*' + 
-                        section_num + r'\.\s*' + re.escape(section_title) + r'\s*', 
-                        r'<h2>\1. ' + section_title + r'</h2>', 
-                        section_content
-                    )
+                    # Remove any duplicate section title after the h2
+                    pattern = r'<h2[^>]*>\s*' + section_num + r'\.\s*' + re.escape(section_title) + r'\s*</h2>\s*' + section_num + r'\.\s*' + re.escape(section_title)
+                    section_content = re.sub(pattern, f'<h2>{section_num}. {section_title}</h2>', section_content)
                     
                     # Also remove standalone section titles
-                    section_content = re.sub(
-                        r'^\s*' + section_num + r'\.\s*' + re.escape(section_title) + r'\s*', 
-                        '', 
-                        section_content
-                    )
+                    section_content = re.sub(r'^\s*' + section_num + r'\.\s*' + re.escape(section_title) + r'\s*', '', section_content)
 
             # Add cleaned div and content
             cleaned_content += div_start + section_content
         else:
             # If no section number found, just add as is
-            cleaned_content += sections[i]
+            if i < len(sections):
+                cleaned_content += sections[i]
 
     # Write cleaned content back to file
     with open(html_file_path, 'w', encoding='utf-8') as f:

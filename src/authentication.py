@@ -22,6 +22,110 @@ CODE_EXPIRY_SECONDS = 300  # Verification codes expire after 5 minutes
 USAGE_LOG_FILE = "usage_log.json"  # File to track usage statistics
 REPORT_TRACKER = "email_report_tracker.json"  # File to track email reports
 
+# Apply modern styling before any UI elements
+def apply_auth_styling():
+    """Apply modern styling for authentication screens"""
+    st.markdown("""
+    <style>
+        /* Main container */
+        .main .block-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding-top: 2rem;
+        }
+        
+        /* App title and branding */
+        .app-title {
+            text-align: center;
+            color: #1E88E5;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+        
+        .app-subtitle {
+            text-align: center;
+            color: #666;
+            font-size: 1.2rem;
+            margin-top: 0.5rem;
+            margin-bottom: 2.5rem;
+        }
+        
+        /* Auth container */
+        .auth-container {
+            background-color: #f8f9fa;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+        }
+        
+        .auth-header {
+            color: #333;
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            font-weight: 600;
+        }
+        
+        /* Form styling */
+        .stTextInput input {
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            font-size: 16px;
+        }
+        
+        .stTextInput input:focus {
+            border-color: #1E88E5;
+            box-shadow: 0 0 0 2px rgba(30, 136, 229, 0.2);
+        }
+        
+        .stButton button {
+            background-color: #1E88E5;
+            color: white;
+            font-weight: 500;
+            border-radius: 4px;
+            border: none;
+            padding: 0.5rem 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        .stButton button:hover {
+            background-color: #1976D2;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        /* Timer styling */
+        .timer {
+            font-size: 1rem;
+            color: #666;
+            text-align: center;
+            margin: 1rem 0;
+        }
+        
+        /* Mobile optimization */
+        @media (max-width: 768px) {
+            .app-title {
+                font-size: 2rem;
+            }
+            
+            .app-subtitle {
+                font-size: 1rem;
+            }
+            
+            .auth-container {
+                padding: 1.5rem;
+            }
+            
+            .auth-header {
+                font-size: 1.3rem;
+            }
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
 def send_verification_code(email, code):
     """Send verification code using SendGrid"""
     try:
@@ -36,11 +140,18 @@ def send_verification_code(email, code):
             subject="Your ProfileMeister Verification Code",
             html_content=f"""
             <html>
-            <body>
-                <h2>ProfileMeister Verification</h2>
-                <p>Your verification code is: <strong>{code}</strong></p>
-                <p>This code will expire in 5 minutes.</p>
-                <p>If you did not request this code, please ignore this email.</p>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px; background-color: #f9f9f9;">
+                    <h2 style="color: #1E88E5; margin-bottom: 20px;">ProfileMeister Verification</h2>
+                    <p>Your verification code is:</p>
+                    <div style="background-color: #1E88E5; color: white; font-size: 24px; font-weight: bold; padding: 10px; border-radius: 4px; text-align: center; margin: 15px 0;">
+                        {code}
+                    </div>
+                    <p>This code will expire in 5 minutes.</p>
+                    <p>If you did not request this code, please ignore this email.</p>
+                    <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                    <p style="font-size: 12px; color: #777;">This is an automated message from ProfileMeister.</p>
+                </div>
             </body>
             </html>
             """
@@ -207,6 +318,8 @@ def initialize_session_state():
         st.session_state.code_expiry = 0
     if 'auth_stage' not in st.session_state:
         st.session_state.auth_stage = "email_input"
+    if 'app_stage' not in st.session_state:
+        st.session_state.app_stage = "auth"
 
 def authentication_required(func):
     """Decorator to require authentication before accessing a function"""
@@ -217,86 +330,123 @@ def authentication_required(func):
             show_login_screen()
             return None
 
+        # If authenticated, update app stage if still in authentication
+        if st.session_state.app_stage == "auth":
+            st.session_state.app_stage = "api_key"
+            
         return func(*args, **kwargs)
     return wrapper
 
 def show_login_screen():
     """Display the login screen to the user"""
-    st.title("ProfileMeister - Authentication Required")
+    # Apply modern styling
+    apply_auth_styling()
     
-    # Make sure session state is initialized first
+    # App title and subtitle
+    st.markdown('<h1 class="app-title">ProfileMeister</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="app-subtitle">Create comprehensive company profiles using AI</p>', unsafe_allow_html=True)
+    
+    # Authentication container
+    st.markdown('<div class="auth-container">', unsafe_allow_html=True)
+    st.markdown('<h2 class="auth-header">Authentication Required</h2>', unsafe_allow_html=True)
+    
+    # Make sure session state is initialized
     initialize_session_state()
     
     # Handle different stages of authentication
     if st.session_state.auth_stage == "email_input":
         st.write("Please enter your work email address to continue.")
         
-        # Use a form to get better control over submission
-        with st.form("email_form"):
-            email = st.text_input("Email (@sc.com domain required):", key="email_input")
+        # Use a form for email input
+        with st.form("email_form", clear_on_submit=False):
+            email = st.text_input(
+                "Email (@sc.com domain required):", 
+                key="email_input",
+                placeholder="your.name@sc.com"
+            )
+            
             submit_button = st.form_submit_button("Send Verification Code")
             
             if submit_button:
                 if not email:
-                    st.error("Email address is required.")
+                    st.error("📧 Email address is required.")
                 elif not is_valid_email(email):
-                    st.error("Please enter a valid @sc.com email address.")
+                    st.error("📧 Please enter a valid @sc.com email address.")
                 else:
-                    # Generate and store verification code first
-                    code = generate_verification_code()
-                    st.session_state.verification_code = code
-                    st.session_state.email = email
-                    st.session_state.code_expiry = time.time() + CODE_EXPIRY_SECONDS
-                    
-                    # Set a flag to track that we need to transition to code verification
-                    st.session_state.should_show_code_verification = True
-                    
-                    # Attempt to send email
-                    success, message = send_verification_code(email, code)
-                    if success:
-                        st.session_state.auth_stage = "code_verification"
-                        st.success(f"Verification code sent to {email}")
-                        st.rerun()  # Force a rerun to show the verification screen
-                    else:
-                        st.error(f"Error sending verification code: {message}")
+                    # Set up verification
+                    with st.spinner("Sending verification code..."):
+                        # Generate and store verification code
+                        code = generate_verification_code()
+                        st.session_state.verification_code = code
+                        st.session_state.email = email
+                        st.session_state.code_expiry = time.time() + CODE_EXPIRY_SECONDS
+                        
+                        # Send verification email
+                        success, message = send_verification_code(email, code)
+                        
+                        if success:
+                            st.session_state.auth_stage = "code_verification"
+                            st.success(f"✅ Verification code sent to {email}")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {message}")
     
     elif st.session_state.auth_stage == "code_verification":
         st.write(f"A verification code has been sent to {st.session_state.email}")
         
-        # Calculate remaining time - this will be recalculated on each page load
+        # Calculate remaining time
         remaining_seconds = max(0, int(st.session_state.code_expiry - time.time()))
         
-        # Check if code has expired
+        # Show remaining time
+        st.markdown(f'<div class="timer">Code expires in {remaining_seconds} seconds</div>', unsafe_allow_html=True)
+        
+        # Check if code expired
         if remaining_seconds <= 0:
-            st.error("Verification code has expired.")
-            # Provide a button to start over
+            st.error("⏰ Verification code has expired.")
+            
             if st.button("Request New Code"):
                 st.session_state.auth_stage = "email_input"
                 st.rerun()
+            
+            st.markdown('</div>', unsafe_allow_html=True)  # Close auth container
             return
-            
-        # Show time remaining
-        st.info(f"Code expires in {remaining_seconds} seconds")
         
-        # Use a form for verification
-        with st.form("verification_form"):
-            entered_code = st.text_input("Enter verification code:", key="code_input")
-            verify_col, cancel_col = st.columns([1, 2])
+        # Verification form
+        with st.form("verification_form", clear_on_submit=False):
+            entered_code = st.text_input(
+                "Enter verification code:", 
+                key="code_input",
+                placeholder="4-digit code"
+            )
             
-            with verify_col:
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
                 verify_button = st.form_submit_button("Verify")
             
-            # Handle verification 
+            with col2:
+                if st.form_submit_button("Cancel"):
+                    st.session_state.auth_stage = "email_input"
+                    st.rerun()
+            
             if verify_button:
-                if entered_code == st.session_state.verification_code:
+                if not entered_code:
+                    st.error("Please enter the verification code.")
+                elif entered_code == st.session_state.verification_code:
+                    # Authentication successful
                     st.session_state.authenticated = True
                     log_user_access(st.session_state.email)
-                    st.success("Verification successful!")
-                    st.rerun()  # Force a rerun to proceed to main app
+                    st.success("✅ Verification successful!")
+                    
+                    # Update app stage for main flow
+                    st.session_state.app_stage = "api_key"
+                    
+                    # Use a spinner during the transition
+                    with st.spinner("Loading..."):
+                        time.sleep(0.5)  # Brief pause for better UX
+                        st.rerun()
                 else:
-                    st.error("Invalid verification code. Please try again.")
-        
-        # Cancel button outside the form
-        if st.button("Cancel", key="cancel_button"):
-            st.session_state.auth_stage = "email_input"
-            st.rerun()
+                    st.error("❌ Invalid verification code. Please try again.")
+    
+    # Close auth container
+    st.markdown('</div>', unsafe_allow_html=True)

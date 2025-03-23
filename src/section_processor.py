@@ -11,6 +11,9 @@ from state_manager import get_elapsed_time
 def process_section(section, documents, persona, analysis_specs, output_format, profile_folder,
                     refinement_iterations=0, q_number=5):
     """Process a single section without threading dependencies"""
+    import os
+    import time
+    
     section_num = section["number"]
     section_title = section["title"]
     section_specs = section["specs"]
@@ -101,7 +104,8 @@ def process_section(section, documents, persona, analysis_specs, output_format, 
         section_content = response.text
 
         # Remove markdown code blocks if present
-        section_content = section_content.replace("```html", "").replace("```", "")
+        section_content = section_content.replace("```html", "")
+        section_content = section_content.replace("```", "")
 
         # Apply HTML repair
         from html_generator import repair_html
