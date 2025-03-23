@@ -7,12 +7,13 @@ import os
 import re
 import json
 import random
-import smtplib
 import time
 from datetime import datetime
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import streamlit as st
+
+# Add SendGrid imports
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 # Configuration
 ALLOWED_DOMAIN = "sc.com"  # Only emails with this domain are allowed
@@ -20,48 +21,34 @@ CODE_EXPIRY_SECONDS = 300  # Verification codes expire after 5 minutes
 USAGE_LOG_FILE = "usage_log.json"  # File to track usage statistics
 
 def send_verification_code(email, code):
-    """Send verification code to email address"""
+    """Send verification code using SendGrid"""
     try:
-        # Get email configuration from environment variables
-        email_user = os.getenv('EMAIL_USER')
-        email_password = os.getenv('EMAIL_PASSWORD')
-        email_server = os.getenv('EMAIL_SERVER', 'smtp.gmail.com')
-        email_port = int(os.getenv('EMAIL_PORT', '587'))
-
-        if not email_user or not email_password:
-            return False, "Email server not configured. Please set EMAIL_USER and EMAIL_PASSWORD environment variables."
-
+        # Get SendGrid configuration
+        sendgrid_key = st.secrets["general"]["SENDGRID_API_KEY"]
+        from_email = st.secrets["general"]["FROM_EMAIL"]
+        
         # Create message
-        msg = MIMEMultipart()
-        msg['From'] = email_user
-        msg['To'] = email
-        msg['Subject'] = "Your ProfileMeister Verification Code"
-
-        # Email body with verification code
-        body = f"""
-        <html>
-        <body>
-            <h2>ProfileMeister Verification</h2>
-            <p>Your verification code is: <strong>{code}</strong></p>
-            <p>This code will expire in 5 minutes.</p>
-            <p>If you did not request this code, please ignore this email.</p>
-        </body>
-        </html>
-        """
-        msg.attach(MIMEText(body, 'html'))
-
-        # Connect to server and send
-        server = smtplib.SMTP(email_server, email_port)
-        server.starttls()
-        server.login(email_user, email_password)
-        server.send_message(msg)
-        server.quit()
-
+        message = Mail(
+            from_email=from_email,
+            to_emails=email,
+            subject="Your ProfileMeister Verification Code",
+            html_content=f"""
+            <html>
+            <body>
+                <h2>ProfileMeister Verification</h2>
+                <p>Your verification code is: <strong>{code}</strong></p>
+                <p>This code will expire in 5 minutes.</p>
+                <p>If you did not request this code, please ignore this email.</p>
+            </body>
+            </html>
+            """
+        )
+        
+        # Send email
+        sg = SendGridAPIClient(sendgrid_key)
+        response = sg.send(message)
         return True, "Verification code sent successfully."
-    except smtplib.SMTPAuthenticationError:
-        return False, "Authentication failed. Please check your EMAIL_USER and EMAIL_PASSWORD."
-    except smtplib.SMTPConnectError:
-        return False, "Could not connect to the email server. Please check EMAIL_SERVER and EMAIL_PORT."
+        
     except Exception as e:
         return False, f"Error sending verification code: {str(e)}"
 
@@ -102,13 +89,34 @@ def log_user_access(email):
         print(f"Error logging access: {str(e)}")
         return False
 
+def initialize_session_state():
+    """Set up initial session state variables for authentication"""
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    if 'email' not in st.session_state:
+        st.session_state.email = ""
+    if 'verification_code' not in st.session_state:
+        st.session_state.verification_code = ""
+    if 'code_expiry' not in st.session_state:
+        st.session_state.code_expiry = 0
+    if 'auth_stage' not in st.session_state:
+        st.session_state.auth_stage = "email_input"
+
+def authentication_required(func):
+    """Decorator to require authentication before accessing a function"""
+    def wrapper(*args, **kwargs):
+        initialize_session_state()
+
+        if not st.session_state.authenticated:
+            show_login_screen()
+            return None
+
+        return func(*args, **kwargs)
+    return wrapper
+
 def show_login_screen():
     """Display the login screen to the user"""
     st.title("ProfileMeister - Authentication Required")
-    
-    # Initialize auth stage if needed
-    if "auth_stage" not in st.session_state:
-        st.session_state.auth_stage = "email_input"
     
     # Handle different stages of authentication
     if st.session_state.auth_stage == "email_input":
@@ -173,6 +181,6 @@ def show_login_screen():
                 else:
                     st.error("Invalid verification code. Please try again.")
         
-        # Cancel button outside the form to avoid form validation
+        # Cancel button outside the form
         if st.button("Cancel", key="cancel_button"):
             st.session_state.auth_stage = "email_input"

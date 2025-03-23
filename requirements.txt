@@ -61,3 +61,5 @@ pdfminer.six>=20221105
 # HTML to PDF conversion (choose one)
 weasyprint>=60.1
 # pdfkit>=1.0.0  # Uncomment if you prefer pdfkit
+
+sendgrid>=6.9.7
