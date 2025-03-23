@@ -105,75 +105,74 @@ def log_user_access(email):
 def show_login_screen():
     """Display the login screen to the user"""
     st.title("ProfileMeister - Authentication Required")
-
-    # TEMPORARY BYPASS FOR TESTING - Top level of function
-    if st.checkbox("Developer Mode (Bypass Email Verification)"):
-        dev_password = st.text_input("Developer Password", type="password")
-        if st.button("Developer Login") and dev_password == "profilemeister":
-            st.session_state.authenticated = True
-            log_user_access("developer@bypass.mode")  # Log the access
-            st.success("Developer authentication successful!")
-            st.rerun()
-            return  # Only return here if authentication is successful
-
-    # Normal authentication flow continues below
     
-    # Step 1: Email input
-    if not st.session_state.verification_sent:
+    # Initialize auth stage if needed
+    if "auth_stage" not in st.session_state:
+        st.session_state.auth_stage = "email_input"
+    
+    # Handle different stages of authentication
+    if st.session_state.auth_stage == "email_input":
         st.write("Please enter your work email address to continue.")
-        email = st.text_input("Email (@sc.com domain required):", key="email_input")
-
-        if st.button("Send Verification Code"):
-            if not email:
-                st.error("Email address is required.")
-            elif not is_valid_email(email):
-                st.error("Please enter a valid @sc.com email address.")
-            else:
-                # Generate and store verification code
-                code = generate_verification_code()
-                st.session_state.verification_code = code
-                st.session_state.email = email
-                st.session_state.code_expiry = time.time() + CODE_EXPIRY_SECONDS
-
-                # Send code via email
-                success, message = send_verification_code(email, code)
-                if success:
-                    st.session_state.verification_sent = True
-                    st.success(f"Verification code sent to {email}")
-                    st.rerun()
+        
+        # Use a form to get better control over submission
+        with st.form("email_form"):
+            email = st.text_input("Email (@sc.com domain required):", key="email_input")
+            submit_button = st.form_submit_button("Send Verification Code")
+            
+            if submit_button:
+                if not email:
+                    st.error("Email address is required.")
+                elif not is_valid_email(email):
+                    st.error("Please enter a valid @sc.com email address.")
                 else:
-                    st.error(message)
-                    st.session_state.verification_sent = False
-
-    # Step 2: Code verification
-    else:
+                    # Generate and store verification code first
+                    code = generate_verification_code()
+                    st.session_state.verification_code = code
+                    st.session_state.email = email
+                    st.session_state.code_expiry = time.time() + CODE_EXPIRY_SECONDS
+                    
+                    # Attempt to send email
+                    success, message = send_verification_code(email, code)
+                    if success:
+                        st.session_state.auth_stage = "code_verification"
+                        st.success(f"Verification code sent to {email}")
+                    else:
+                        st.error(f"Error sending verification code: {message}")
+    
+    elif st.session_state.auth_stage == "code_verification":
         st.write(f"A verification code has been sent to {st.session_state.email}")
-
+        
+        # Calculate remaining time - this will be recalculated on each page load
+        remaining_seconds = max(0, int(st.session_state.code_expiry - time.time()))
+        
         # Check if code has expired
-        if time.time() > st.session_state.code_expiry:
-            st.error("Verification code has expired. Please request a new one.")
-            st.session_state.verification_sent = False
-            st.rerun()
-
-        entered_code = st.text_input("Enter verification code:", key="code_input")
-
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            if st.button("Verify"):
+        if remaining_seconds <= 0:
+            st.error("Verification code has expired.")
+            # Provide a button to start over
+            if st.button("Request New Code"):
+                st.session_state.auth_stage = "email_input"
+            return
+            
+        # Show time remaining
+        st.info(f"Code expires in {remaining_seconds} seconds")
+        
+        # Use a form for verification
+        with st.form("verification_form"):
+            entered_code = st.text_input("Enter verification code:", key="code_input")
+            verify_col, cancel_col = st.columns([1, 2])
+            
+            with verify_col:
+                verify_button = st.form_submit_button("Verify")
+            
+            # Handle verification 
+            if verify_button:
                 if entered_code == st.session_state.verification_code:
                     st.session_state.authenticated = True
                     log_user_access(st.session_state.email)
                     st.success("Verification successful!")
-                    st.rerun()
                 else:
                     st.error("Invalid verification code. Please try again.")
-
-        with col2:
-            if st.button("Cancel"):
-                st.session_state.verification_sent = False
-                st.rerun()
-
-        # Show expiry countdown
-        remaining_seconds = int(st.session_state.code_expiry - time.time())
-        if remaining_seconds > 0:
-            st.write(f"Code expires in {remaining_seconds} seconds")
+        
+        # Cancel button outside the form to avoid form validation
+        if st.button("Cancel", key="cancel_button"):
+            st.session_state.auth_stage = "email_input"
