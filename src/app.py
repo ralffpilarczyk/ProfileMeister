@@ -23,6 +23,11 @@ import html_generator
 from utils import persona, analysis_specs, output_format, get_elapsed_time
 from section_processor import process_section
 
+# Initialize start_time for elapsed time tracking
+start_time = time.time()
+if "start_time" not in st.session_state:
+    st.session_state.start_time = start_time
+
 # Load .env from parent directory
 from dotenv import load_dotenv
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -287,7 +292,6 @@ def api_key_input():
     """Get Google API Key from the user"""
     # App title and subtitle
     st.markdown('<h1 class="app-title">ProfileMeister</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="app-subtitle">Create comprehensive company profiles using AI</p>', unsafe_allow_html=True)
     
     # Disclaimer under title
     st.markdown('<div class="disclaimer">ProfileMeister is an LLM-based company profile generator. Outputs may not be correct or complete and need to be checked.</div>', unsafe_allow_html=True)
@@ -319,10 +323,10 @@ def api_key_input():
                     import google.generativeai as genai
                     genai.configure(api_key=api_key)
                     api_client.initialize_api(api_key)
-                    st.experimental_rerun()
+                    st.rerun()  # Changed from experimental_rerun
                 except Exception as e:
                     st.error(f"Error initializing API client: {str(e)}")
-    
+                  
     if not api_key:
         st.info("""
         ### Getting a Google API Key
@@ -357,11 +361,7 @@ def upload_documents_streamlit():
         
         # Display disclaimer
         st.markdown("---")
-        st.markdown("""
-        <div class='disclaimer'>
-        ProfileMeister is an LLM-based company profile generator. Outputs may not be correct or complete and need to be checked.
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("ProfileMeister is an LLM-based company profile generator. Outputs may not be correct or complete and need to be checked.")
    
         st.markdown('</div>', unsafe_allow_html=True)  # Close container
         return {}
@@ -688,7 +688,7 @@ def show_processing_screen():
 
 def show_results_screen():
     """Show results screen"""
-    # App title and subtitle
+    # App title - subtitle kept for this screen as it's informative
     st.markdown('<h1 class="app-title">ProfileMeister</h1>', unsafe_allow_html=True)
     st.markdown('<p class="app-subtitle">Your company profile is ready</p>', unsafe_allow_html=True)
     
@@ -717,77 +717,85 @@ def show_results_screen():
     st.markdown('<div class="content-container">', unsafe_allow_html=True)
     st.markdown('<h2 class="section-header">Refine Individual Sections</h2>', unsafe_allow_html=True)
     
-    st.write("Click the 'Refine' button next to any section to apply additional AI refinement.")
+    st.write("Select a section to refine with additional AI processing:")
     
-    # Create a layout with 3 columns
-    cols = st.columns(3)
+    # Create a dropdown for section selection
+    section_options = [f"{section['number']}. {section['title']}" for section in st.session_state.sections_to_process]
+    selected_section = st.selectbox("Choose section to refine:", section_options)
     
-    # Display sections with refinement buttons
-    for i, section in enumerate(st.session_state.sections_to_process):
-        section_num = section["number"]
-        section_title = section["title"]
-        col_idx = i % 3
+    if selected_section:
+        section_num = int(selected_section.split('.')[0])
+        section_title = selected_section.split('.', 1)[1].strip()
         
-        with cols[col_idx]:
+        # Find the section definition
+        selected_section_def = next((s for s in st.session_state.sections_to_process if s["number"] == section_num), None)
+        
+        if selected_section_def:
+            # Show status of the section
             if section_num in st.session_state.refined_sections:
-                st.markdown(f"<div style='padding: 10px; margin-bottom: 10px; border-left: 4px solid #4CAF50;'>✅ <b>{section_num}. {section_title}</b> <span style='color:#4CAF50;'>(Refined)</span></div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='padding: 10px; border-left: 4px solid #4CAF50;'><b>{section_num}. {section_title}</b> <span style='color:#4CAF50;'>(Already Refined)</span></div>", unsafe_allow_html=True)
             else:
-                st.markdown(f"<div style='padding: 10px; margin-bottom: 10px;'><b>{section_num}. {section_title}</b></div>", unsafe_allow_html=True)
-                if st.button(f"Refine Section {section_num}", key=f"refine_{section_num}"):
-                    with st.spinner(f"Refining section {section_num}..."):
-                        # Refine the section
-                        refined_content = refine_section(
-                            section, 
-                            st.session_state.documents, 
-                            st.session_state.profile_folder
+                st.markdown(f"<div style='padding: 10px;'><b>{section_num}. {section_title}</b></div>", unsafe_allow_html=True)
+            
+            # Refine button
+            refine_button_text = "Refine Section" if section_num not in st.session_state.refined_sections else "Refine Again"
+            if st.button(refine_button_text):
+                with st.spinner(f"Refining section {section_num}..."):
+                    # Refine the section
+                    refined_content = refine_section(
+                        selected_section_def, 
+                        st.session_state.documents, 
+                        st.session_state.profile_folder
+                    )
+                    
+                    if refined_content:
+                        # Update the results
+                        st.session_state.results[section_num] = refined_content
+                        
+                        # Regenerate the full profile
+                        ordered_section_contents = []
+                        for sec in st.session_state.sections_to_process:
+                            sec_num = sec["number"]
+                            section_content = st.session_state.results.get(sec_num, f'''
+                            <div class="section" id="section-{sec_num}">
+                              <h2>{sec_num}. {sec["title"]}</h2>
+                              <p class="error">ERROR: No result for section {sec_num}</p>
+                            </div>
+                            ''')
+                            ordered_section_contents.append(section_content)
+                        
+                        full_profile = html_generator.generate_full_html_profile(
+                            st.session_state.company_name, 
+                            st.session_state.sections_to_process, 
+                            ordered_section_contents
                         )
                         
-                        if refined_content:
-                            # Update the results
-                            st.session_state.results[section_num] = refined_content
-                            
-                            # Regenerate the full profile
-                            ordered_section_contents = []
-                            for sec in st.session_state.sections_to_process:
-                                sec_num = sec["number"]
-                                section_content = st.session_state.results.get(sec_num, f'''
-                                <div class="section" id="section-{sec_num}">
-                                  <h2>{sec_num}. {sec["title"]}</h2>
-                                  <p class="error">ERROR: No result for section {sec_num}</p>
-                                </div>
-                                ''')
-                                ordered_section_contents.append(section_content)
-                            
-                            full_profile = html_generator.generate_full_html_profile(
-                                st.session_state.company_name, 
-                                st.session_state.sections_to_process, 
-                                ordered_section_contents
-                            )
-                            
-                            # Add disclaimer to the full HTML just after the table of contents
-                            
-                            # Add disclaimer to the full HTML just after the table of contents
-                            disclaimer_html = """
-                            <div style="margin-bottom: 30px; padding: 15px; background-color: #f8f9fa; border-radius: 5px; border-left: 4px solid #f0ad4e;">
-                                <p style="font-size: 0.9em; color: #555;">
-                                    ProfileMeister is an LLM-based company profile generator. Outputs may not be correct or complete and need to be checked.
-                                </p>
-                            </div>
-                            """
-                           
-                            # Insert disclaimer after table of contents
-                            toc_end_marker = '</div>\n\n    <div class="content">'
-                            full_profile = full_profile.replace(toc_end_marker, '</div>\n\n' + disclaimer_html + '\n    <div class="content">')
-                            
-                            # Save the final compiled profile as HTML
-                            with open(final_profile_path, "w", encoding="utf-8") as f:
-                                f.write(full_profile)
-                            
-                            # Fix HTML issues
-                            html_generator.fix_html_file(st.session_state.profile_folder)
-                            
-                            # Refresh the page to show updated content
-                            st.rerun()
+                        # Add disclaimer to the full HTML
+                        disclaimer_html = """
+                        <p style="margin-bottom: 30px; color: #555; font-size: 0.9em;">
+                            ProfileMeister is an LLM-based company profile generator. Outputs may not be correct or complete and need to be checked.
+                        </p>
+                        """
+                        
+                        # Insert disclaimer after table of contents
+                        toc_end_marker = '</div>\n\n    <div class="content">'
+                        full_profile = full_profile.replace(toc_end_marker, '</div>\n\n' + disclaimer_html + '\n    <div class="content">')
+                        
+                        # Save the final compiled profile as HTML
+                        with open(final_profile_path, "w", encoding="utf-8") as f:
+                            f.write(full_profile)
+                        
+                        # Fix HTML issues
+                        html_generator.fix_html_file(st.session_state.profile_folder)
+                        
+                        # Refresh the page to show updated content
+                        st.rerun()
+    
+    # Display refined sections summary
+    if st.session_state.refined_sections:
+        st.markdown("### Refined Sections")
+        refined_list = ", ".join([f"Section {num}" for num in st.session_state.refined_sections])
+        st.markdown(f"<div style='color:#4CAF50;'>{refined_list}</div>", unsafe_allow_html=True)
     
     st.markdown('</div>', unsafe_allow_html=True)  # Close refinement container
     
@@ -814,7 +822,7 @@ def show_results_screen():
         st.rerun()
     
     st.markdown('</div>', unsafe_allow_html=True)  # Close export container
-
+    
 @authentication_required
 def main():
     """Main application function"""

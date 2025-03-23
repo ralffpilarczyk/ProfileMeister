@@ -379,11 +379,11 @@ def show_login_screen():
         # Use a form for email input
         with st.form("email_form", clear_on_submit=False):
             email = st.text_input(
-                "Email (@sc.com domain required):", 
+                "Email:", 
                 key="email_input",
                 placeholder="your.name@sc.com"
             )
-            
+                      
             submit_button = st.form_submit_button("Send Verification Code")
             
             if submit_button:
