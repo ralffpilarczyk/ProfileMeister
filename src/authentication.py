@@ -118,6 +118,9 @@ def show_login_screen():
     """Display the login screen to the user"""
     st.title("ProfileMeister - Authentication Required")
     
+    # Make sure session state is initialized first
+    initialize_session_state()
+
     # Handle different stages of authentication
     if st.session_state.auth_stage == "email_input":
         st.write("Please enter your work email address to continue.")
