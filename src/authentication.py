@@ -27,9 +27,9 @@ def send_verification_code(email, code):
         sendgrid_key = st.secrets["general"]["SENDGRID_API_KEY"]
         from_email = st.secrets["general"]["FROM_EMAIL"]
         
-        # Create message
+        # Create message with improved sender display name
         message = Mail(
-            from_email=from_email,
+            from_email=(from_email, "ProfileMeister Verification"),  # (email, display_name) format
             to_emails=email,
             subject="Your ProfileMeister Verification Code",
             html_content=f"""
@@ -129,7 +129,7 @@ def show_login_screen():
         with st.form("email_form"):
             email = st.text_input("Email (@sc.com domain required):", key="email_input")
             submit_button = st.form_submit_button("Send Verification Code")
-            
+
             if submit_button:
                 if not email:
                     st.error("Email address is required.")
@@ -142,11 +142,15 @@ def show_login_screen():
                     st.session_state.email = email
                     st.session_state.code_expiry = time.time() + CODE_EXPIRY_SECONDS
                     
+                    # Set a flag to track that we need to transition to code verification
+                    st.session_state.should_show_code_verification = True
+                    
                     # Attempt to send email
                     success, message = send_verification_code(email, code)
                     if success:
                         st.session_state.auth_stage = "code_verification"
                         st.success(f"Verification code sent to {email}")
+                        st.rerun()  # Force a rerun to show the verification screen
                     else:
                         st.error(f"Error sending verification code: {message}")
     
