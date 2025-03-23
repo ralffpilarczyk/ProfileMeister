@@ -185,9 +185,10 @@ def show_login_screen():
                     st.session_state.authenticated = True
                     log_user_access(st.session_state.email)
                     st.success("Verification successful!")
+                    st.rerun()  # Force a complete rerun to proceed to main app
                 else:
                     st.error("Invalid verification code. Please try again.")
-        
+
         # Cancel button outside the form
         if st.button("Cancel", key="cancel_button"):
             st.session_state.auth_stage = "email_input"
